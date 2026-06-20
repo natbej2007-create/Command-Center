@@ -444,7 +444,7 @@ let allEvents    = [];
 async function login() {
   try {
     await msalApp.handleRedirectPromise();
-    const result = await msalApp.loginPopup({ scopes: CONFIG.scopes });
+    const result = await msalApp.loginRedirect({ scopes: CONFIG.scopes });
     msalApp.setActiveAccount(result.account);
     await boot();
   } catch (e) {
