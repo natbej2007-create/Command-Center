@@ -461,7 +461,7 @@ async function getToken() {
     return result.accessToken;
   } catch {
     try {
-      const result = await msalApp.acquireTokenPopup({ scopes: CONFIG.scopes });
+      const result = await msalApp.acquireTokenRedirect({ scopes: CONFIG.scopes });
       return result.accessToken;
     } catch { return null; }
   }
