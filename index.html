@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Command Center — United Services</title>
+<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #ffffff;
+    --bg-2: #f8f9fa;
+    --bg-3: #f1f3f5;
+    --text: #111827;
+    --text-2: #6b7280;
+    --text-3: #9ca3af;
+    --border: rgba(0,0,0,0.08);
+    --border-2: rgba(0,0,0,0.14);
+    --radius: 8px;
+    --radius-lg: 12px;
+    --red-bg: #fee2e2;
+    --red-fg: #b91c1c;
+    --amber-bg: #fef3c7;
+    --amber-fg: #b45309;
+    --blue-bg: #dbeafe;
+    --blue-fg: #1d4ed8;
+    --green-bg: #dcfce7;
+    --green-fg: #15803d;
+    --gray-bg: #f3f4f6;
+    --gray-fg: #6b7280;
+    --dot-high: #ef4444;
+    --dot-med: #f59e0b;
+    --dot-low: #22c55e;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg-2);
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    border: 0.5px solid var(--border-2);
+    background: var(--bg);
+    color: var(--text);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: background 0.1s;
+    line-height: 1;
+  }
+  button:hover { background: var(--bg-3); }
+  button:active { transform: scale(0.98); }
+  button.primary {
+    background: var(--text);
+    color: var(--bg);
+    border-color: var(--text);
+  }
+  button.primary:hover { opacity: 0.88; }
+  button.danger { color: var(--red-fg); }
+
+  a.btn {
+    font-family: inherit;
+    font-size: 13px;
+    border: 0.5px solid var(--border-2);
+    background: var(--bg);
+    color: var(--text);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    text-decoration: none;
+    transition: background 0.1s;
+  }
+  a.btn:hover { background: var(--bg-3); }
+
+  textarea {
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.7;
+    width: 100%;
+    padding: 10px 12px;
+    border: 0.5px solid var(--border-2);
+    border-radius: var(--radius);
+    background: var(--bg-2);
+    color: var(--text);
+    resize: vertical;
+  }
+  textarea:focus { outline: none; border-color: rgba(0,0,0,0.3); }
+
+  .badge {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: var(--radius);
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  /* Login */
+  #login-screen {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+  }
+  .login-card {
+    background: var(--bg);
+    border: 0.5px solid var(--border-2);
+    border-radius: var(--radius-lg);
+    padding: 2.5rem;
+    max-width: 360px;
+    width: 100%;
+    text-align: center;
+  }
+  .login-logo {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: var(--text);
+    color: var(--bg);
+    font-size: 16px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 1.25rem;
+  }
+  .login-card h1 { font-size: 20px; font-weight: 500; margin-bottom: 6px; }
+  .login-card p { font-size: 14px; color: var(--text-2); margin-bottom: 1.5rem; }
+
+  /* App shell */
+  #app { display: none; max-width: 720px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+
+  /* Header */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1.25rem;
+    gap: 12px;
+  }
+  .header h1 { font-size: 18px; font-weight: 500; }
+  .header-sub { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+  .header-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+  /* Stats */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 1.25rem;
+  }
+  .stat {
+    border-radius: var(--radius);
+    padding: 12px 16px;
+  }
+  .stat-label { font-size: 12px; margin-bottom: 4px; opacity: 0.85; }
+  .stat-value { font-size: 22px; font-weight: 500; }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    border-bottom: 0.5px solid var(--border-2);
+    margin-bottom: 1.25rem;
+  }
+  .tab {
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--text-2);
+    background: transparent;
+    margin-bottom: -0.5px;
+  }
+  .tab:hover { background: transparent; color: var(--text); }
+  .tab.active { border-bottom-color: var(--text); color: var(--text); font-weight: 500; }
+
+  /* Cards */
+  .card {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1rem 1.25rem;
+    margin-bottom: 10px;
+  }
+  .card.active { border-color: var(--border-2); }
+  .card.conflict { border-color: #f87171; }
+
+  .card-top { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
+  .priority-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 6px; }
+
+  .card-meta { flex: 1; min-width: 0; }
+  .card-subject {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 3px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .card-from { font-size: 13px; color: var(--text-2); margin-bottom: 4px; }
+  .card-preview {
+    font-size: 13px;
+    color: var(--text-2);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .card-right { flex-shrink: 0; text-align: right; }
+  .card-time { font-size: 12px; color: var(--text-3); margin-bottom: 6px; white-space: nowrap; }
+
+  .ai-note {
+    background: var(--bg-2);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+    font-size: 13px;
+    color: var(--text-2);
+    display: flex;
+    gap: 6px;
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+
+  .conflict-banner {
+    background: var(--red-bg);
+    color: var(--red-fg);
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .card-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+  /* Event card extras */
+  .event-title { font-size: 14px; font-weight: 500; margin-bottom: 5px; }
+  .event-meta { font-size: 13px; color: var(--text-2); display: flex; align-items: center; gap: 5px; margin-bottom: 3px; }
+
+  /* Action panel */
+  #action-panel {
+    margin-top: 16px;
+    background: var(--bg);
+    border: 0.5px solid var(--border-2);
+    border-radius: var(--radius-lg);
+    padding: 1.25rem;
+  }
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+  .panel-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; }
+  .panel-context {
+    font-size: 13px;
+    color: var(--text-2);
+    padding: 8px 10px;
+    background: var(--bg-2);
+    border-radius: var(--radius);
+    margin-bottom: 1rem;
+  }
+  .panel-body { font-size: 14px; line-height: 1.7; color: var(--text); margin-bottom: 1rem; }
+  .panel-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+  /* Team list */
+  .team-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    width: 100%;
+    text-align: left;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .team-info { display: flex; align-items: center; gap: 10px; }
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--blue-bg);
+    color: var(--blue-fg);
+    font-size: 11px; font-weight: 500;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .team-name { font-size: 13px; font-weight: 500; }
+  .team-role { font-size: 12px; color: var(--text-2); }
+
+  /* Slot cards */
+  .slot-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-2);
+    margin-bottom: 8px;
+    gap: 10px;
+  }
+  .slot-info { flex: 1; min-width: 0; }
+  .slot-time { font-size: 13px; font-weight: 500; margin-bottom: 2px; }
+  .slot-reason { font-size: 12px; color: var(--text-2); }
+  .slot-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+  /* Loading / empty */
+  .loading, .empty {
+    text-align: center;
+    padding: 2.5rem 0;
+    color: var(--text-2);
+  }
+  .loading i, .empty i { font-size: 28px; display: block; margin-bottom: 10px; color: var(--text-3); }
+  .loading p, .empty p { font-size: 14px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinning { animation: spin 1s linear infinite; }
+
+  @media (max-width: 480px) {
+    .stats { grid-template-columns: 1fr 1fr; }
+    .stats .stat:first-child { grid-column: 1 / -1; }
+    .header h1 { font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Login Screen -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">GL</div>
+    <h1>Command center</h1>
+    <p>Sign in with your United Services Microsoft account to access your inbox and calendar.</p>
+    <button class="primary" onclick="login()" style="width:100%; justify-content:center; padding:10px 16px; font-size:14px;">
+      <i class="ti ti-brand-windows"></i>
+      Sign in with Microsoft
+    </button>
+  </div>
+</div>
+
+<!-- Main App -->
+<div id="app">
+  <div class="header">
+    <div>
+      <h1>Command center</h1>
+      <p class="header-sub" id="user-info">Loading...</p>
+    </div>
+    <div class="header-actions">
+      <button id="refresh-btn" onclick="refreshAll()">
+        <i class="ti ti-refresh" id="refresh-icon"></i>
+        Refresh
+      </button>
+      <button onclick="logout()" style="color: var(--text-2);">
+        <i class="ti ti-logout"></i>
+        Sign out
+      </button>
+    </div>
+  </div>
+
+  <div class="stats" id="stats-row" style="display:none"></div>
+
+  <div class="tabs" id="tabs" style="display:none">
+    <button class="tab active" onclick="switchTab('email')">
+      <i class="ti ti-mail"></i>
+      Email triage
+    </button>
+    <button class="tab" onclick="switchTab('calendar')">
+      <i class="ti ti-calendar"></i>
+      Calendar
+    </button>
+  </div>
+
+  <div id="email-view"></div>
+  <div id="calendar-view" style="display:none"></div>
+  <div id="action-panel" style="display:none"></div>
+</div>
+
+<script>
+// ================================================================
+// CONFIGURATION — Fill these in before deploying
+// ================================================================
+const CONFIG = {
+  clientId:  "YOUR_CLIENT_ID_HERE",
+  tenantId:  "unitedservices.work",
+  claudeKey: "YOUR_CLAUDE_API_KEY_HERE",
+  scopes:    ["User.Read", "Mail.Read", "Calendars.Read"],
+};
+
+const TEAM = [
+  { name: "Natalie Bejarano", role: "Executive Assistant",          initials: "NB" },
+  { name: "Enos LeBaron",     role: "Chief Operating Officer",      initials: "EL" },
+  { name: "Abraham LeBaron",  role: "Chief of Business Development",initials: "AL" },
+  { name: "German Torres",    role: "BD System Owner",              initials: "GT" },
+  { name: "Daniela",          role: "Systems",                      initials: "DA" },
+  { name: "Fernanda",         role: "Project Controls",             initials: "FE" },
+];
+
+// ================================================================
+// MSAL SETUP
+// ================================================================
+const msalConfig = {
+  auth: {
+    clientId:    CONFIG.clientId,
+    authority:   "https://login.microsoftonline.com/" + CONFIG.tenantId,
+    redirectUri: window.location.href.split("?")[0].split("#")[0],
+  },
+  cache: { cacheLocation: "sessionStorage", storeAuthStateInCookie: false },
+};
+
+let msalApp;
+window.addEventListener("load", function() {
+  msalApp = new msal.PublicClientApplication(msalConfig);
+  boot();
+});
+
+let accessToken  = null;
+let activePanel  = null;
+let activeTab    = "email";
+let doneEmailIds = new Set();
+let allEmails    = [];
+let allEvents    = [];
+
+// ================================================================
+// AUTH
+// ================================================================
+async function login() {
+  try {
+    await msalApp.handleRedirectPromise();
+    const result = await msalApp.loginPopup({ scopes: CONFIG.scopes });
+    msalApp.setActiveAccount(result.account);
+    await boot();
+  } catch (e) {
+    console.error("Login error:", e);
+    alert("Sign-in failed. If you are in the Teams desktop app, try opening in a browser window.");
+  }
+}
+
+async function getToken() {
+  const account = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
+  if (!account) return null;
+  try {
+    const result = await msalApp.acquireTokenSilent({ scopes: CONFIG.scopes, account });
+    return result.accessToken;
+  } catch {
+    try {
+      const result = await msalApp.acquireTokenPopup({ scopes: CONFIG.scopes });
+      return result.accessToken;
+    } catch { return null; }
+  }
+}
+
+function logout() {
+  msalApp.logoutPopup().catch(() => msalApp.logoutRedirect());
+}
+
+// ================================================================
+// BOOT
+// ================================================================
+async function boot() {
+  await msalApp.handleRedirectPromise().catch(() => {});
+  const account = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
+  if (!account) {
+    document.getElementById("login-screen").style.display = "flex";
+    document.getElementById("app").style.display = "none";
+    return;
+  }
+  msalApp.setActiveAccount(account);
+  document.getElementById("login-screen").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  document.getElementById("tabs").style.display = "flex";
+
+  const name = account.name || account.username;
+  document.getElementById("user-info").textContent =
+    name + " · CSO, United Services · " + new Date().toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" });
+
+  await refreshAll();
+}
+
+async function refreshAll() {
+  closePanel();
+  const icon = document.getElementById("refresh-icon");
+  icon.classList.add("spinning");
+  try {
+    accessToken = await getToken();
+    if (!accessToken) { icon.classList.remove("spinning"); return; }
+    await Promise.all([loadEmails(), loadCalendar()]);
+  } finally {
+    icon.classList.remove("spinning");
+  }
+}
+
+// ================================================================
+// GRAPH API
+// ================================================================
+async function graphGet(url) {
+  const res = await fetch("https://graph.microsoft.com/v1.0" + url, {
+    headers: { Authorization: "Bearer " + accessToken }
+  });
+  if (!res.ok) throw new Error("Graph error: " + res.status);
+  return res.json();
+}
+
+async function loadEmails() {
+  showLoading("email-view", "Reading your inbox...");
+  try {
+    const data = await graphGet(
+      "/me/mailFolders/inbox/messages" +
+      "?$top=15&$orderby=receivedDateTime%20desc" +
+      "&$select=id,subject,from,receivedDateTime,bodyPreview,isRead,importance,hasAttachments,webLink"
+    );
+    allEmails = data.value || [];
+    doneEmailIds = new Set();
+    await triageAndRenderEmails();
+  } catch (e) {
+    document.getElementById("email-view").innerHTML =
+      '<div class="empty"><i class="ti ti-alert-circle"></i><p>Could not load emails. Check your permissions.</p></div>';
+  }
+}
+
+async function loadCalendar() {
+  const now   = new Date();
+  const start = new Date(now); start.setHours(0,0,0,0);
+  const end   = new Date(now); end.setHours(23,59,59,999);
+  try {
+    const data = await graphGet(
+      "/me/calendarview" +
+      "?startdatetime=" + start.toISOString() +
+      "&enddatetime="   + end.toISOString() +
+      "&$select=id,subject,start,end,organizer,location,attendees,webLink,bodyPreview" +
+      "&$orderby=start/dateTime&$top=25"
+    );
+    allEvents = detectConflicts(data.value || []);
+    renderCalendar();
+  } catch {
+    document.getElementById("calendar-view").innerHTML =
+      '<div class="empty"><i class="ti ti-alert-circle"></i><p>Could not load calendar.</p></div>';
+  }
+}
+
+// ================================================================
+// CLAUDE TRIAGE
+// ================================================================
+async function triageAndRenderEmails() {
+  const emails = allEmails.filter(e => !doneEmailIds.has(e.id));
+  if (!emails.length) {
+    renderEmailList([], []);
+    return;
+  }
+
+  // Render cards immediately with loading state for AI notes
+  renderEmailList(emails, null);
+
+  // Then triage in background
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": CONFIG.claudeKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1000,
+        system: `You are triaging emails for Geronimo LeBaron, CSO of United Services (utility-scale solar construction, US/Mexico border region). His team: Natalie (EA), Enos (COO), Abraham (BD Chief), German (BD), Daniela (Systems), Fernanda (Project Controls), Ruth (Safety/OSHA). Classify each email and give a one-sentence action recommendation. Return ONLY a valid JSON array, no markdown.`,
+        messages: [{
+          role: "user",
+          content: `Classify these emails. Return: [{"id":"...","category":"action_required|forward|meeting_request|fyi","priority":"high|medium|low","aiNote":"one action sentence"}]. Emails: ` +
+            JSON.stringify(emails.map(e => ({
+              id: e.id,
+              from: e.from?.emailAddress?.address,
+              subject: e.subject,
+              preview: (e.bodyPreview || "").substring(0, 150),
+            })))
+        }]
+      })
+    });
+    const data   = await res.json();
+    const text   = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+    const match  = text.match(/\[[\s\S]*?\]/);
+    const triage = match ? JSON.parse(match[0]) : [];
+    renderEmailList(emails, triage);
+  } catch {
+    renderEmailList(emails, []);
+  }
+}
+
+// ================================================================
+// RENDER EMAILS
+// ================================================================
+function renderEmailList(emails, triage) {
+  const container = document.getElementById("email-view");
+  if (!emails.length) {
+    container.innerHTML = '<div class="empty"><i class="ti ti-inbox"></i><p>All caught up. Inbox is clear.</p></div>';
+    updateStats([]);
+    return;
+  }
+
+  const triageMap = {};
+  (triage || []).forEach(t => { triageMap[t.id] = t; });
+
+  updateStats(emails.map(e => triageMap[e.id]?.category || "fyi"));
+  document.getElementById("stats-row").style.display = "grid";
+
+  container.innerHTML = emails.map(email => {
+    const t   = triageMap[email.id] || {};
+    const cat = t.category || "fyi";
+    const pri = t.priority  || "low";
+    const note = triage === null ? "Analyzing..." : (t.aiNote || "");
+    return emailCard(email, cat, pri, note);
+  }).join("");
+}
+
+function emailCard(email, cat, pri, note) {
+  const catBadge = { action_required: catTag("action_required"), forward: catTag("forward"), meeting_request: catTag("meeting_request"), fyi: catTag("fyi") }[cat] || catTag("fyi");
+  const dotColor = { high: "var(--dot-high)", medium: "var(--dot-med)", low: "var(--dot-low)" }[pri] || "var(--dot-low)";
+  const timeStr  = formatEmailTime(email.receivedDateTime);
+  const isMtg    = cat === "meeting_request";
+  return `
+<div class="card" id="card-${email.id}">
+  <div class="card-top">
+    <span class="priority-dot" style="background:${dotColor}"></span>
+    <div class="card-meta">
+      <div class="card-subject">
+        <span>${esc(email.subject || "(no subject)")}</span>
+        ${email.hasAttachments ? '<i class="ti ti-paperclip" style="font-size:13px;color:var(--text-3)" aria-label="Has attachments"></i>' : ""}
+      </div>
+      <div class="card-from">${esc(email.from?.emailAddress?.name || "")} · ${esc(email.from?.emailAddress?.address || "")}</div>
+      <div class="card-preview">${esc(email.bodyPreview || "")}</div>
+    </div>
+    <div class="card-right">
+      <div class="card-time">${timeStr}</div>
+      ${catBadge}
+    </div>
+  </div>
+  ${note ? `<div class="ai-note"><i class="ti ti-bulb" style="font-size:14px;flex-shrink:0;margin-top:1px"></i><span>${esc(note)}</span></div>` : ""}
+  <div class="card-actions">
+    <button onclick="openPanel('reply','${email.id}')"><i class="ti ti-arrow-back-up"></i> Reply</button>
+    <button onclick="openPanel('forward','${email.id}')"><i class="ti ti-arrow-forward-up"></i> Forward</button>
+    ${isMtg ? `<button onclick="openPanel('schedule','${email.id}')"><i class="ti ti-calendar-plus"></i> Schedule</button>` : ""}
+    <a class="btn" href="${esc(email.webLink || "#")}" target="_blank" rel="noopener"><i class="ti ti-external-link"></i> Open</a>
+    <button onclick="markDone('${email.id}')" style="margin-left:auto;color:var(--text-2)"><i class="ti ti-check"></i> Done</button>
+  </div>
+</div>`;
+}
+
+// ================================================================
+// RENDER CALENDAR
+// ================================================================
+function renderCalendar() {
+  const container = document.getElementById("calendar-view");
+  if (!allEvents.length) {
+    container.innerHTML = '<div class="empty"><i class="ti ti-calendar"></i><p>No events found for today.</p></div>';
+    return;
+  }
+  container.innerHTML = allEvents.map(event => eventCard(event)).join("");
+}
+
+function eventCard(event) {
+  const start    = formatTime(event.start?.dateTime);
+  const end      = formatTime(event.end?.dateTime);
+  const location = event.location?.displayName;
+  const organizer = event.organizer?.emailAddress?.name;
+  const attendees = (event.attendees || []).map(a => a.emailAddress?.name || a.emailAddress?.address).filter(Boolean);
+  const catColor = { workingElsewhere: "var(--gray-bg)", tentative: "var(--amber-bg)" }[""] || "var(--gray-bg)";
+
+  return `
+<div class="card${event.hasConflict ? " conflict" : ""}" id="card-${event.id}">
+  ${event.hasConflict ? `<div class="conflict-banner"><i class="ti ti-alert-circle"></i>Conflict: overlaps with "${esc(event.conflictWith)}"</div>` : ""}
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px">
+    <div style="flex:1">
+      <div class="event-title">${esc(event.subject || "(no title)")}</div>
+      <div class="event-meta"><i class="ti ti-clock" style="font-size:13px"></i>${start} to ${end}</div>
+      ${location ? `<div class="event-meta"><i class="ti ti-video" style="font-size:13px"></i>${esc(location)}</div>` : ""}
+      ${organizer ? `<div class="event-meta"><i class="ti ti-user" style="font-size:13px"></i>${esc(organizer)}</div>` : ""}
+      ${attendees.length ? `<div class="event-meta"><i class="ti ti-users" style="font-size:13px"></i>${esc(attendees.join(", "))}</div>` : ""}
+    </div>
+  </div>
+  <div class="card-actions">
+    <button onclick="openPanel('reschedule','${event.id}',true)"><i class="ti ti-calendar-event"></i> Reschedule</button>
+    <button class="danger" onclick="openPanel('cancel','${event.id}',true)"><i class="ti ti-x"></i> Cancel</button>
+    ${attendees.length ? `<button onclick="openPanel('message','${event.id}',true)"><i class="ti ti-send"></i> Message attendees</button>` : ""}
+  </div>
+</div>`;
+}
+
+// ================================================================
+// ACTION PANEL
+// ================================================================
+function openPanel(type, itemId, isEvent) {
+  const item   = isEvent ? allEvents.find(e => e.id === itemId) : allEmails.find(e => e.id === itemId);
+  if (!item) return;
+  activePanel  = { type, item, isEvent: !!isEvent };
+
+  const panel  = document.getElementById("action-panel");
+  panel.style.display = "block";
+
+  const contextLabel = isEvent ? (item.subject || "Event") : (item.subject || "(no subject)");
+
+  const meta = {
+    reply:      { title: "Draft reply",       icon: "ti-arrow-back-up" },
+    forward:    { title: "Forward to team",   icon: "ti-arrow-forward-up" },
+    schedule:   { title: "Schedule meeting",  icon: "ti-calendar-plus" },
+    reschedule: { title: "Find a new time",   icon: "ti-calendar-event" },
+    cancel:     { title: "Before you cancel", icon: "ti-alert-circle" },
+    message:    { title: "Message attendees", icon: "ti-send" },
+  }[type] || { title: type, icon: "ti-settings" };
+
+  let body = "";
+
+  if (type === "reply") {
+    body = `<div id="draft-area"><div class="loading" style="padding:1rem 0"><i class="ti ti-loader spinning" style="font-size:20px"></i><p>Drafting in your voice...</p></div></div>
+    <div class="panel-actions" id="draft-actions" style="display:none">
+      <a class="btn" href="${esc(item.webLink || "#")}" target="_blank" rel="noopener"><i class="ti ti-external-link"></i> Open in Outlook to send</a>
+      <button onclick="regenerateDraft()"><i class="ti ti-refresh"></i> Regenerate</button>
+    </div>`;
+    setTimeout(() => generateDraft(item), 50);
+  } else if (type === "forward") {
+    body = `<p style="font-size:13px;color:var(--text-2);margin-bottom:1rem">Who should handle this?</p>
+    ${TEAM.map(m => `<button class="team-btn" onclick="alert('Forward action noted. Open the email in Outlook and forward to ${m.name}.')">
+      <div class="team-info"><div class="avatar">${m.initials}</div><div><div class="team-name">${m.name}</div><div class="team-role">${m.role}</div></div></div>
+      <i class="ti ti-arrow-up-right" style="font-size:14px;color:var(--text-3)"></i>
+    </button>`).join("")}`;
+  } else if (type === "schedule" || type === "reschedule") {
+    body = `<p class="panel-body">I will check your calendar for the best open windows this week.</p>
+    <div id="slots-area"><div class="loading" style="padding:1rem 0"><i class="ti ti-loader spinning" style="font-size:20px"></i><p>Checking your calendar...</p></div></div>`;
+    setTimeout(() => findAvailableSlots(), 50);
+  } else if (type === "cancel") {
+    body = `<p class="panel-body">Before you cancel this, do you want to reschedule instead? I can find open windows this week.</p>
+    <div class="panel-actions">
+      <button onclick="openPanel('reschedule','${itemId}',true)"><i class="ti ti-calendar-event"></i> Yes, find a new time</button>
+      <button class="danger" onclick="confirmCancel('${esc(item.subject || "this event")}','${esc(item.webLink || "#")}')"><i class="ti ti-x"></i> Cancel anyway</button>
+    </div>`;
+  } else if (type === "message") {
+    const attendees = (item.attendees || []).map(a => a.emailAddress?.name || a.emailAddress?.address).filter(Boolean);
+    body = `<p style="font-size:13px;color:var(--text-2);margin-bottom:1rem">Draft a message to attendees: ${esc(attendees.join(", "))}.</p>
+    <div id="draft-area"><div class="loading" style="padding:1rem 0"><i class="ti ti-loader spinning" style="font-size:20px"></i><p>Drafting message...</p></div></div>
+    <div class="panel-actions" id="draft-actions" style="display:none">
+      <a class="btn" href="${esc(item.webLink || "#")}" target="_blank" rel="noopener"><i class="ti ti-external-link"></i> Open event in Outlook</a>
+      <button onclick="regenerateDraft()"><i class="ti ti-refresh"></i> Regenerate</button>
+    </div>`;
+    setTimeout(() => generateAttendeeMessage(item), 50);
+  }
+
+  panel.innerHTML = `
+    <div class="panel-header">
+      <div class="panel-title"><i class="ti ${meta.icon}" style="font-size:16px;color:var(--text-2)"></i>${meta.title}</div>
+      <button onclick="closePanel()" aria-label="Close"><i class="ti ti-x" style="font-size:16px"></i></button>
+    </div>
+    <div class="panel-context">${esc(contextLabel)}</div>
+    ${body}`;
+
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function closePanel() {
+  const panel = document.getElementById("action-panel");
+  panel.style.display = "none";
+  panel.innerHTML = "";
+  activePanel = null;
+}
+
+// ================================================================
+// CLAUDE — DRAFT REPLY
+// ================================================================
+async function generateDraft(email) {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": CONFIG.claudeKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 500,
+        system: `You are drafting a reply email in Geronimo LeBaron's voice. He is warm, visionary, strategic, relational. He uses phrases like "Right?", "So...", "I think...", "I believe...", "Does that make sense?" His tone is that of a teacher and mentor. He never uses any dash characters in his writing. Keep the reply to 3 to 5 sentences. Return ONLY the email body text. No subject line. No greeting opener. No sign-off line.`,
+        messages: [{ role: "user", content: `Draft a reply. Sender: ${email.from?.emailAddress?.name}. Subject: "${email.subject}". Content: "${(email.bodyPreview||"").substring(0,300)}"` }]
+      })
+    });
+    const data = await res.json();
+    const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
+    showDraft(text);
+  } catch {
+    showDraft("Could not generate draft. Check your Claude API key in CONFIG.");
+  }
+}
+
+async function generateAttendeeMessage(event) {
+  const attendees = (event.attendees || []).map(a => a.emailAddress?.name || "").filter(Boolean).join(", ");
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": CONFIG.claudeKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 400,
+        system: `You are drafting a message from Geronimo LeBaron to meeting attendees. His voice is warm, direct, and relational. No dash characters. 2 to 3 sentences.`,
+        messages: [{ role: "user", content: `Draft a brief message to the attendees (${attendees}) of the meeting "${event.subject}" to notify them of a potential update or change. Keep it open-ended since the specific message content will be filled in.` }]
+      })
+    });
+    const data = await res.json();
+    const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
+    showDraft(text);
+  } catch {
+    showDraft("Could not generate draft. Check your Claude API key.");
+  }
+}
+
+function regenerateDraft() {
+  if (!activePanel) return;
+  const area = document.getElementById("draft-area");
+  const actions = document.getElementById("draft-actions");
+  if (area) area.innerHTML = '<div class="loading" style="padding:1rem 0"><i class="ti ti-loader spinning" style="font-size:20px"></i><p>Regenerating...</p></div>';
+  if (actions) actions.style.display = "none";
+  if (activePanel.isEvent) generateAttendeeMessage(activePanel.item);
+  else generateDraft(activePanel.item);
+}
+
+function showDraft(text) {
+  const area    = document.getElementById("draft-area");
+  const actions = document.getElementById("draft-actions");
+  if (area) area.innerHTML = `<textarea id="draft-text" rows="6">${esc(text)}</textarea>`;
+  if (actions) actions.style.display = "flex";
+}
+
+// ================================================================
+// CLAUDE — FIND AVAILABLE SLOTS
+// ================================================================
+async function findAvailableSlots() {
+  try {
+    // Get current week range
+    const now   = new Date();
+    const weekEnd = new Date(now); weekEnd.setDate(now.getDate() + 5);
+    const token = await getToken();
+    if (!token) throw new Error("No token");
+
+    const data = await fetch(
+      "https://graph.microsoft.com/v1.0/me/calendarview" +
+      "?startdatetime=" + now.toISOString() +
+      "&enddatetime=" + weekEnd.toISOString() +
+      "&$select=subject,start,end&$top=50&$orderby=start/dateTime",
+      { headers: { Authorization: "Bearer " + token } }
+    ).then(r => r.json());
+
+    const busySlots = (data.value || []).map(e => ({
+      start: new Date(e.start.dateTime),
+      end:   new Date(e.end.dateTime),
+    }));
+
+    // Find 3 open 1-hour windows during business hours (8am-6pm, skip 12-1pm rest)
+    const slots = [];
+    let check = new Date(now);
+    check.setMinutes(0,0,0);
+    if (check.getHours() < 8) check.setHours(8);
+
+    while (slots.length < 3 && check < weekEnd) {
+      const h = check.getHours();
+      const day = check.getDay();
+      if (day !== 0 && day !== 6 && h >= 8 && h < 17 && h !== 12) {
+        const slotEnd = new Date(check); slotEnd.setHours(h+1);
+        const conflict = busySlots.find(b => check < b.end && slotEnd > b.start);
+        if (!conflict) {
+          const score = slots.length === 0 ? "best" : slots.length === 1 ? "good" : "ok";
+          const reason = h < 10 ? "Early morning, good focus block" : h < 13 ? "Mid-morning, calendar clear" : "Afternoon open block";
+          slots.push({ slot: formatSlot(check, slotEnd), score, reason });
+        }
+      }
+      check.setHours(check.getHours()+1);
+    }
+
+    const slotsHtml = slots.length
+      ? slots.map(s => slotCard(s)).join("")
+      : "<p style='font-size:13px;color:var(--text-2)'>No clear windows found this week. Consider next week.</p>";
+
+    const area = document.getElementById("slots-area");
+    if (area) area.innerHTML = slotsHtml;
+  } catch {
+    const area = document.getElementById("slots-area");
+    if (area) area.innerHTML = "<p style='font-size:13px;color:var(--text-2)'>Could not load calendar availability.</p>";
+  }
+}
+
+function slotCard(slot) {
+  const color = { best: "var(--green-bg)", good: "var(--blue-bg)", ok: "var(--amber-bg)" }[slot.score] || "var(--blue-bg)";
+  const fg    = { best: "var(--green-fg)", good: "var(--blue-fg)", ok: "var(--amber-fg)" }[slot.score] || "var(--blue-fg)";
+  return `<div class="slot-card">
+    <div class="slot-info">
+      <div class="slot-time">${esc(slot.slot)}</div>
+      <div class="slot-reason">${esc(slot.reason)}</div>
+    </div>
+    <div class="slot-actions">
+      <span class="badge" style="background:${color};color:${fg}">${slot.score}</span>
+      <button onclick="alert('Slot noted. Open Outlook or Teams to send a calendar invite for this time.')">Pick this</button>
+    </div>
+  </div>`;
+}
+
+function confirmCancel(title, link) {
+  if (confirm("Cancel \"" + title + "\"? You will need to do this manually in Outlook.")) {
+    window.open(link, "_blank");
+    closePanel();
+  }
+}
+
+// ================================================================
+// TABS
+// ================================================================
+function switchTab(tab) {
+  activeTab = tab;
+  closePanel();
+  document.getElementById("email-view").style.display    = tab === "email" ? "block" : "none";
+  document.getElementById("calendar-view").style.display = tab === "calendar" ? "block" : "none";
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".tab")[tab === "email" ? 0 : 1].classList.add("active");
+}
+
+// ================================================================
+// MARK DONE
+// ================================================================
+function markDone(emailId) {
+  doneEmailIds.add(emailId);
+  const card = document.getElementById("card-" + emailId);
+  if (card) {
+    card.style.opacity = "0";
+    card.style.transition = "opacity 0.2s";
+    setTimeout(() => {
+      if (card.parentNode) card.parentNode.removeChild(card);
+      const emails = allEmails.filter(e => !doneEmailIds.has(e.id));
+      updateStats(emails.map(() => "fyi")); // approximate
+      if (!emails.length) {
+        document.getElementById("email-view").innerHTML = '<div class="empty"><i class="ti ti-inbox"></i><p>All caught up. Inbox is clear.</p></div>';
+      }
+    }, 200);
+  }
+  if (activePanel?.item?.id === emailId) closePanel();
+}
+
+// ================================================================
+// HELPERS
+// ================================================================
+function updateStats(categories) {
+  const total  = categories.length;
+  const action = categories.filter(c => c === "action_required").length;
+  const fwd    = categories.filter(c => c === "forward").length;
+  document.getElementById("stats-row").innerHTML = [
+    { label: "In inbox",        value: total,  bg: "var(--bg-3)",     fg: "var(--text)" },
+    { label: "Action required", value: action, bg: "var(--red-bg)",   fg: "var(--red-fg)" },
+    { label: "To forward",      value: fwd,    bg: "var(--amber-bg)", fg: "var(--amber-fg)" },
+  ].map(s => `<div class="stat" style="background:${s.bg}">
+    <div class="stat-label" style="color:${s.fg}">${s.label}</div>
+    <div class="stat-value" style="color:${s.fg}">${s.value}</div>
+  </div>`).join("");
+}
+
+function catTag(cat) {
+  const map = {
+    action_required: ["Action required", "var(--red-bg)",   "var(--red-fg)"],
+    forward:         ["Forward",         "var(--amber-bg)", "var(--amber-fg)"],
+    meeting_request: ["Meeting request", "var(--blue-bg)",  "var(--blue-fg)"],
+    fyi:             ["FYI",             "var(--gray-bg)",  "var(--gray-fg)"],
+  };
+  const [label, bg, fg] = map[cat] || map.fyi;
+  return `<span class="badge" style="background:${bg};color:${fg}">${label}</span>`;
+}
+
+function detectConflicts(events) {
+  return events.map((event, i) => {
+    const s = new Date(event.start?.dateTime);
+    const e = new Date(event.end?.dateTime);
+    const conflict = events.find((other, j) => {
+      if (i === j) return false;
+      const os = new Date(other.start?.dateTime);
+      const oe = new Date(other.end?.dateTime);
+      return s < oe && e > os;
+    });
+    return { ...event, hasConflict: !!conflict, conflictWith: conflict?.subject || null };
+  });
+}
+
+function formatTime(dt) {
+  if (!dt) return "";
+  return new Date(dt).toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit", hour12:true });
+}
+
+function formatEmailTime(dt) {
+  if (!dt) return "";
+  const d = new Date(dt);
+  if (d.toDateString() === new Date().toDateString())
+    return d.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit", hour12:true });
+  return d.toLocaleDateString("en-US", { month:"short", day:"numeric" });
+}
+
+function formatSlot(start, end) {
+  const opts = { weekday:"short", month:"short", day:"numeric" };
+  return start.toLocaleDateString("en-US", opts) + ", " + formatTime(start.toISOString()) + " to " + formatTime(end.toISOString());
+}
+
+function showLoading(containerId, label) {
+  document.getElementById(containerId).innerHTML =
+    `<div class="loading"><i class="ti ti-loader spinning"></i><p>${label}</p></div>`;
+}
+
+function esc(str) {
+  return String(str || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+// ================================================================
+// INIT
+// ================================================================
+// boot() called inside window load event
+</script>
+</body>
+</html>
