@@ -651,7 +651,7 @@ async function triageAndRenderEmails() {
       }]
     });
     const text   = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-    const match  = text.match(/\[[\s\S]*?\]/);
+    const match  = text.match(/\[[\s\S]*\]/);
     const triage = match ? JSON.parse(match[0]) : [];
     renderEmailList(emails, triage);
   } catch (e) {
