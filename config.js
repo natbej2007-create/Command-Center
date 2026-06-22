@@ -18,7 +18,7 @@ window.CC_CONFIG = {
   // Your Azure Function endpoint that talks to Claude.
   // Fill this in AFTER you deploy the function (Step 3 in README).
   // Example: https://command-center-ai.azurewebsites.net/api/claude
-  proxyUrl: "PASTE_YOUR_AZURE_FUNCTION_URL_HERE",
+  proxyUrl: "https://command-center-ai.natbej2007.workers.dev/",
 
   // Base URL where these files are hosted (GitHub Pages).
   // Used to build the auth popup pages.
