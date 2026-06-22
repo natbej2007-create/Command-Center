@@ -600,14 +600,14 @@ async function loadEmails() {
 async function loadCalendar() {
   const now   = new Date();
   const start = new Date(now); start.setHours(0,0,0,0);
-  const end   = new Date(now); end.setHours(23,59,59,999);
+  const end   = new Date(now); end.setDate(now.getDate() + 7); end.setHours(23,59,59,999);
   try {
     const data = await graphGet(
       "/me/calendarview" +
       "?startdatetime=" + start.toISOString() +
       "&enddatetime="   + end.toISOString() +
-      "&$select=id,subject,start,end,organizer,location,attendees,webLink,bodyPreview" +
-      "&$orderby=start/dateTime&$top=25"
+      "&$select=id,subject,start,end,isAllDay,organizer,location,attendees,webLink,bodyPreview" +
+      "&$orderby=start/dateTime&$top=50"
     );
     allEvents = detectConflicts(data.value || []);
     renderCalendar();
@@ -618,7 +618,7 @@ async function loadCalendar() {
 }
 
 // ================================================================
-// CLAUDE (via your Azure Function proxy — never the key directly)
+// CLAUDE (via your Cloudflare Worker proxy — never the key directly)
 // ================================================================
 async function callClaude(payload) {
   if (!CONFIG.proxyUrl || CONFIG.proxyUrl.indexOf("PASTE_") === 0) {
@@ -735,7 +735,7 @@ function emailCard(email, cat, pri, note, draft) {
 function renderCalendar() {
   const container = document.getElementById("calendar-view");
   if (!allEvents.length) {
-    container.innerHTML = '<div class="empty"><i class="ti ti-calendar"></i><p>No events found for today.</p></div>';
+    container.innerHTML = '<div class="empty"><i class="ti ti-calendar"></i><p>No events in the next 7 days.</p></div>';
     return;
   }
   container.innerHTML = allEvents.map(event => eventCard(event)).join("");
@@ -746,6 +746,10 @@ function eventCard(event) {
   const end      = formatTime(event.end && event.end.dateTime);
   const sInst    = toInstant(event.start && event.start.dateTime);
   const eInst    = toInstant(event.end && event.end.dateTime);
+  const allDay   = !!event.isAllDay;
+  const datePart = ((event.start && event.start.dateTime) || "").slice(0, 10);
+  const dateRef  = allDay ? (datePart ? new Date(datePart + "T12:00:00") : null) : sInst;
+  const dateLabel = dateRef ? dateRef.toLocaleDateString("en-US", { weekday:"short", month:"short", day:"numeric" }) : "";
   const location = event.location && event.location.displayName;
   const organizer = event.organizer && event.organizer.emailAddress ? event.organizer.emailAddress.name : "";
   const attendees = (event.attendees || []).map(a => (a.emailAddress && (a.emailAddress.name || a.emailAddress.address))).filter(Boolean);
@@ -756,8 +760,9 @@ function eventCard(event) {
   <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px">
     <div style="flex:1">
       <div class="event-title">${esc(event.subject || "(no title)")}</div>
-      <div class="event-meta"><i class="ti ti-clock" style="font-size:13px"></i>${start} to ${end}</div>
-      ${zonesBlock(sInst, eInst)}
+      <div class="event-meta"><i class="ti ti-calendar" style="font-size:13px"></i>${dateLabel}</div>
+      <div class="event-meta"><i class="ti ti-clock" style="font-size:13px"></i>${allDay ? "All day" : (start + " to " + end)}</div>
+      ${allDay ? "" : zonesBlock(sInst, eInst)}
       ${location ? `<div class="event-meta"><i class="ti ti-video" style="font-size:13px"></i>${esc(location)}</div>` : ""}
       ${organizer ? `<div class="event-meta"><i class="ti ti-user" style="font-size:13px"></i>${esc(organizer)}</div>` : ""}
       ${attendees.length ? `<div class="event-meta"><i class="ti ti-users" style="font-size:13px"></i>${esc(attendees.join(", "))}</div>` : ""}
@@ -862,23 +867,29 @@ async function generateDraft(email) {
     const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
     showDraft(text);
   } catch (e) {
-    showDraft("Could not generate draft. Check that your Azure Function proxy is deployed and the URL is set in config.js.");
+    showDraft("Could not generate draft. Check that your proxy URL is set in config.js and the worker is deployed.");
   }
 }
 
 async function generateAttendeeMessage(event) {
   const attendees = (event.attendees || []).map(a => (a.emailAddress && a.emailAddress.name) || "").filter(Boolean).join(", ");
+  const sInst = toInstant(event.start && event.start.dateTime);
+  const eInst = toInstant(event.end && event.end.dateTime);
+  const zoneStr = sInst
+    ? TZONES.map(z => z.label + " " + tzTime(sInst, z.tz) + (eInst ? " to " + tzTime(eInst, z.tz) : "")).join(", ")
+    : "";
+  const dateStr = sInst ? sInst.toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" }) : "";
   try {
     const data = await callClaude({
       model: "claude-sonnet-4-6",
       max_tokens: 400,
-      system: `You are drafting a message from Geronimo LeBaron to meeting attendees. His voice is warm, direct, and relational. No dash characters. 2 to 3 sentences.`,
-      messages: [{ role: "user", content: `Draft a brief message to the attendees (${attendees}) of the meeting "${event.subject}" to notify them of a potential update or change. Keep it open-ended since the specific message content will be filled in.` }]
+      system: `You are drafting a message from Geronimo LeBaron to meeting attendees. His voice is warm, direct, and relational. No dash characters. 2 to 3 sentences. Whenever you mention the meeting time, spell it out across every listed time zone so no one across the US and Mexico border is confused.`,
+      messages: [{ role: "user", content: `Draft a brief message to the attendees (${attendees}) of the meeting "${event.subject}" on ${dateStr}. When referencing the time, write it across these zones exactly: ${zoneStr}. Keep it open-ended since the specific update will be filled in.` }]
     });
     const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
     showDraft(text);
   } catch (e) {
-    showDraft("Could not generate draft. Check that your Azure Function proxy is deployed and the URL is set in config.js.");
+    showDraft("Could not generate draft. Check that your proxy URL is set in config.js and the worker is deployed.");
   }
 }
 
