@@ -393,10 +393,15 @@
       <i class="ti ti-calendar"></i>
       Calendar
     </button>
+    <button class="tab" onclick="switchTab('availability')">
+      <i class="ti ti-clock-hour-4"></i>
+      Availability
+    </button>
   </div>
 
   <div id="email-view"></div>
   <div id="calendar-view" style="display:none"></div>
+  <div id="availability-view" style="display:none"></div>
   <div id="action-panel" style="display:none"></div>
 </div>
 
@@ -637,11 +642,11 @@ async function triageAndRenderEmails() {
   try {
     const data = await callClaude({
       model: "claude-sonnet-4-6",
-      max_tokens: 2000,
-      system: `You are triaging emails for Geronimo LeBaron, CSO of United Services (utility-scale solar construction, US/Mexico border region). His team: Natalie (EA), Enos (COO), Abraham (BD Chief), German (BD), Daniela (Systems), Fernanda (Project Controls), Ruth (Safety/OSHA). Classify each email and give a one-sentence action recommendation. Return ONLY a valid JSON array, no markdown.`,
+      max_tokens: 3000,
+      system: `You are triaging emails for Geronimo LeBaron, CSO of United Services (utility-scale solar construction, US/Mexico border region). His team: Natalie (EA), Enos (COO), Abraham (BD Chief), German (BD), Daniela (Systems), Fernanda (Project Controls), Ruth (Safety/OSHA). Classify each email and give a one-sentence action recommendation. For emails that genuinely need a reply (category action_required or meeting_request), also write a short draft reply of 1 to 2 sentences in Geronimo's voice: warm, direct, relational, a teacher and mentor, never using any dash character. For fyi or forward emails, leave the draft as an empty string. Return ONLY a valid JSON array, no markdown.`,
       messages: [{
         role: "user",
-        content: `Classify these emails. Use the exact numeric id given. Return: [{"id":0,"category":"action_required|forward|meeting_request|fyi","priority":"high|medium|low","aiNote":"one action sentence"}]. Emails: ` +
+        content: `Classify these emails. Use the exact numeric id given. Return: [{"id":0,"category":"action_required|forward|meeting_request|fyi","priority":"high|medium|low","aiNote":"one action sentence","draftReply":"short reply in Geronimo's voice, or empty string"}]. Emails: ` +
           JSON.stringify(emails.map((e, i) => ({
             id: i,
             from: e.from && e.from.emailAddress ? e.from.emailAddress.address : "",
@@ -683,11 +688,12 @@ function renderEmailList(emails, triage) {
     const cat = t.category || "fyi";
     const pri = t.priority  || "low";
     const note = triage === null ? "Analyzing..." : (t.aiNote || "");
-    return emailCard(email, cat, pri, note);
+    const draft = triage === null ? "" : (t.draftReply || "");
+    return emailCard(email, cat, pri, note, draft);
   }).join("");
 }
 
-function emailCard(email, cat, pri, note) {
+function emailCard(email, cat, pri, note, draft) {
   const catBadge = catTag(cat);
   const dotColor = { high: "var(--dot-high)", medium: "var(--dot-med)", low: "var(--dot-low)" }[pri] || "var(--dot-low)";
   const timeStr  = formatEmailTime(email.receivedDateTime);
@@ -712,6 +718,7 @@ function emailCard(email, cat, pri, note) {
     </div>
   </div>
   ${note ? `<div class="ai-note"><i class="ti ti-bulb" style="font-size:14px;flex-shrink:0;margin-top:1px"></i><span>${esc(note)}</span></div>` : ""}
+  ${draft ? `<div class="ai-note" style="background:var(--green-bg);align-items:flex-start"><i class="ti ti-message-2" style="font-size:14px;flex-shrink:0;margin-top:1px;color:var(--green-fg)"></i><div><div style="font-size:11px;font-weight:600;color:var(--green-fg);margin-bottom:2px">Suggested reply</div><div style="color:var(--text)">${esc(draft)}</div></div></div>` : ""}
   <div class="card-actions">
     <button onclick="openPanel('reply','${email.id}')"><i class="ti ti-arrow-back-up"></i> Reply</button>
     <button onclick="openPanel('forward','${email.id}')"><i class="ti ti-arrow-forward-up"></i> Forward</button>
@@ -976,10 +983,99 @@ function confirmCancel(title, link) {
 function switchTab(tab) {
   activeTab = tab;
   closePanel();
-  document.getElementById("email-view").style.display    = tab === "email" ? "block" : "none";
-  document.getElementById("calendar-view").style.display = tab === "calendar" ? "block" : "none";
-  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-  document.querySelectorAll(".tab")[tab === "email" ? 0 : 1].classList.add("active");
+  document.getElementById("email-view").style.display        = tab === "email" ? "block" : "none";
+  document.getElementById("calendar-view").style.display     = tab === "calendar" ? "block" : "none";
+  document.getElementById("availability-view").style.display = tab === "availability" ? "block" : "none";
+  const order = { email: 0, calendar: 1, availability: 2 };
+  const tabs = document.querySelectorAll(".tab");
+  tabs.forEach(t => t.classList.remove("active"));
+  if (tabs[order[tab]]) tabs[order[tab]].classList.add("active");
+  if (tab === "availability") renderAvailability();
+}
+
+// ================================================================
+// AVAILABILITY (quick daily open windows)
+// ================================================================
+async function renderAvailability() {
+  const view = document.getElementById("availability-view");
+  view.innerHTML = '<div class="loading"><i class="ti ti-loader spinning"></i><p>Finding open windows...</p></div>';
+  try {
+    const token = await getToken();
+    if (!token) throw new Error("No token");
+    const start = new Date(); start.setHours(0,0,0,0);
+    const end   = new Date(start); end.setDate(start.getDate() + 9);
+    const data = await fetch(
+      "https://graph.microsoft.com/v1.0/me/calendarview?startdatetime=" + start.toISOString() +
+      "&enddatetime=" + end.toISOString() + "&$select=subject,start,end&$top=150&$orderby=start/dateTime",
+      { headers: { Authorization: "Bearer " + token, Prefer: 'outlook.timezone="UTC"' } }
+    ).then(r => r.json());
+    const events = (data.value || []).map(e => ({ start: toInstant(e.start.dateTime), end: toInstant(e.end.dateTime) }))
+      .filter(e => e.start && e.end);
+
+    const days = [];
+    const cursor = new Date(); cursor.setHours(0,0,0,0);
+    while (days.length < 5) {
+      const d = cursor.getDay();
+      if (d !== 0 && d !== 6) days.push(new Date(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    view.innerHTML = days.map(d => dayAvailabilityCard(d, events)).join("");
+  } catch (e) {
+    view.innerHTML = '<div class="empty"><i class="ti ti-alert-circle"></i><p>Could not load availability.</p></div>';
+  }
+}
+
+function dayAvailabilityCard(dayDate, events) {
+  const now      = new Date();
+  const dayStart = new Date(dayDate); dayStart.setHours(8,0,0,0);
+  const dayEnd   = new Date(dayDate); dayEnd.setHours(18,0,0,0);
+  const isToday  = dayDate.toDateString() === now.toDateString();
+
+  let from = new Date(dayStart);
+  if (isToday && now > from) {
+    from = new Date(now);
+    from.setMinutes(from.getMinutes() <= 30 ? 30 : 60, 0, 0);
+    if (from < dayStart) from = new Date(dayStart);
+  }
+
+  // Busy intervals clipped to the business window, then merged.
+  const busy = events
+    .filter(ev => ev.start < dayEnd && ev.end > dayStart)
+    .map(ev => ({ s: ev.start < dayStart ? new Date(dayStart) : new Date(ev.start), e: ev.end > dayEnd ? new Date(dayEnd) : new Date(ev.end) }))
+    .sort((a, b) => a.s - b.s);
+  const merged = [];
+  busy.forEach(b => {
+    const last = merged[merged.length - 1];
+    if (last && b.s <= last.e) { if (b.e > last.e) last.e = b.e; }
+    else merged.push({ s: new Date(b.s), e: new Date(b.e) });
+  });
+
+  // Free gaps of at least 30 minutes.
+  const free = [];
+  let p = new Date(from);
+  merged.forEach(b => {
+    if (b.s > p) free.push({ s: new Date(p), e: new Date(b.s) });
+    if (b.e > p) p = new Date(b.e);
+  });
+  if (p < dayEnd) free.push({ s: new Date(p), e: new Date(dayEnd) });
+  const windows = free.filter(w => (w.e - w.s) >= 30 * 60 * 1000);
+
+  const label = dayDate.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  const body = windows.length
+    ? windows.map(w =>
+        `<div class="slot-card">
+           <div class="slot-info">
+             <div class="slot-time">${formatTime(w.s.toISOString())} to ${formatTime(w.e.toISOString())}</div>
+             <div class="slot-reason" style="font-size:11px;color:var(--text-3)">${TZONES.map(z => z.label + " " + tzTime(w.s, z.tz)).join("  ·  ")}</div>
+           </div>
+         </div>`
+      ).join("")
+    : `<div class="slot-reason" style="padding:8px 2px;color:var(--text-2)">No open windows in business hours.</div>`;
+
+  return `<div class="card">
+    <div class="event-title">${label}${isToday ? ' <span class="badge" style="background:var(--blue-bg);color:var(--blue-fg);margin-left:6px">Today</span>' : ''}</div>
+    <div style="margin-top:10px">${body}</div>
+  </div>`;
 }
 
 function markDone(emailId) {
