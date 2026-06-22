@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Signing in...</title>
+  <script src="https://res.cdn.office.net/teams-js/2.24.0/js/MicrosoftTeams.min.js"></script>
+  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; display:flex; align-items:center;
+           justify-content:center; height:100vh; margin:0; color:#444; }
+  </style>
+</head>
+<body>
+  <p>Connecting to Microsoft...</p>
+  <script src="config.js"></script>
+  <script>
+    // This page opens inside the Teams auth popup. It kicks off the
+    // Microsoft login redirect. The result is handled by auth-end.html.
+    microsoftTeams.app.initialize().then(function () {
+      var cfg = window.CC_CONFIG;
+      var msalApp = new msal.PublicClientApplication({
+        auth: {
+          clientId: cfg.clientId,
+          authority: "https://login.microsoftonline.com/" + cfg.tenantId,
+          redirectUri: cfg.baseUrl + "/auth-end.html",
+          navigateToLoginRequestUrl: false
+        },
+        cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
+      });
+
+      msalApp.initialize().then(function () {
+        // Pass any login hint Teams gave us to smooth the flow.
+        var hint = "";
+        try {
+          var parsed = new URLSearchParams(window.location.search);
+          hint = parsed.get("login_hint") || "";
+        } catch (e) {}
+
+        msalApp.loginRedirect({
+          scopes: cfg.scopes,
+          loginHint: hint,
+          prompt: "select_account"
+        });
+      });
+    }).catch(function (e) {
+      document.body.innerHTML = "<p>Could not start sign in: " + e + "</p>";
+    });
+  </script>
+</body>
+</html>

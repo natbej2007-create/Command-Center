@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Command Center — United Services</title>
+<script src="https://res.cdn.office.net/teams-js/2.24.0/js/MicrosoftTeams.min.js"></script>
 <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -142,6 +143,7 @@
   }
   .login-card h1 { font-size: 20px; font-weight: 500; margin-bottom: 6px; }
   .login-card p { font-size: 14px; color: var(--text-2); margin-bottom: 1.5rem; }
+  .login-err { font-size: 12px; color: var(--red-fg); margin-top: 1rem; display: none; }
 
   /* App shell */
   #app { display: none; max-width: 720px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
@@ -357,6 +359,7 @@
       <i class="ti ti-brand-windows"></i>
       Sign in with Microsoft
     </button>
+    <p class="login-err" id="login-err"></p>
   </div>
 </div>
 
@@ -397,16 +400,12 @@
   <div id="action-panel" style="display:none"></div>
 </div>
 
+<script src="config.js"></script>
 <script>
 // ================================================================
-// CONFIGURATION — Fill these in before deploying
+// Config comes from config.js (window.CC_CONFIG). No secrets here.
 // ================================================================
-const CONFIG = {
-  clientId:  "YOUR_CLIENT_ID_HERE",
-  tenantId:  "unitedservices.work",
-  claudeKey: "YOUR_CLAUDE_API_KEY_HERE",
-  scopes:    ["User.Read", "Mail.Read", "Calendars.Read"],
-};
+const CONFIG = window.CC_CONFIG;
 
 const TEAM = [
   { name: "Natalie Bejarano", role: "Executive Assistant",          initials: "NB" },
@@ -418,23 +417,10 @@ const TEAM = [
 ];
 
 // ================================================================
-// MSAL SETUP
+// STATE
 // ================================================================
-const msalConfig = {
-  auth: {
-    clientId:    CONFIG.clientId,
-    authority:   "https://login.microsoftonline.com/" + CONFIG.tenantId,
-    redirectUri: window.location.href.split("?")[0].split("#")[0],
-  },
-  cache: { cacheLocation: "sessionStorage", storeAuthStateInCookie: false },
-};
-
 let msalApp;
-window.addEventListener("load", function() {
-  msalApp = new msal.PublicClientApplication(msalConfig);
-  boot();
-});
-
+let inTeams      = false;
 let accessToken  = null;
 let activePanel  = null;
 let activeTab    = "email";
@@ -443,43 +429,105 @@ let allEmails    = [];
 let allEvents    = [];
 
 // ================================================================
+// INIT
+// ================================================================
+const msalConfig = {
+  auth: {
+    clientId:    CONFIG.clientId,
+    authority:   "https://login.microsoftonline.com/" + CONFIG.tenantId,
+    redirectUri: window.location.href.split("?")[0].split("#")[0],
+  },
+  // localStorage so the token cached by the auth popup is visible to this tab.
+  cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
+};
+
+window.addEventListener("load", initApp);
+
+async function initApp() {
+  try {
+    msalApp = new msal.PublicClientApplication(msalConfig);
+    await msalApp.initialize();
+    await msalApp.handleRedirectPromise().catch(() => {});
+  } catch (e) {
+    console.error("MSAL init error:", e);
+  }
+
+  // Are we running inside Microsoft Teams?
+  try {
+    await microsoftTeams.app.initialize();
+    inTeams = true;
+  } catch (e) {
+    inTeams = false;
+  }
+
+  boot();
+}
+
+// ================================================================
 // AUTH
 // ================================================================
 async function login() {
+  hideLoginError();
   try {
-    await msalApp.handleRedirectPromise();
-    const result = await msalApp.loginPopup({ scopes: CONFIG.scopes });
-    msalApp.setActiveAccount(result.account);
-    await boot();
+    if (inTeams) {
+      // Teams handles the popup; auth-start.html does the MSAL redirect.
+      await microsoftTeams.authentication.authenticate({
+        url: CONFIG.baseUrl + "/auth-start.html",
+        width: 600,
+        height: 535,
+      });
+      await boot();
+    } else {
+      // Plain browser: standard redirect login.
+      await msalApp.loginRedirect({ scopes: CONFIG.scopes });
+    }
   } catch (e) {
     console.error("Login error:", e);
-    alert("Sign-in failed. If you are in the Teams desktop app, try opening in a browser window.");
+    showLoginError("Sign in did not complete. " +
+      (inTeams ? "Try opening the app in Teams web once to grant access." : "Please try again.") +
+      " (" + (e && e.message ? e.message : e) + ")");
   }
 }
 
 async function getToken() {
   const account = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
   if (!account) return null;
+  msalApp.setActiveAccount(account);
   try {
     const result = await msalApp.acquireTokenSilent({ scopes: CONFIG.scopes, account });
     return result.accessToken;
-  } catch {
+  } catch (e) {
+    // Silent failed: interactively re-auth.
     try {
-      const result = await msalApp.acquireTokenPopup({ scopes: CONFIG.scopes });
-      return result.accessToken;
-    } catch { return null; }
+      if (inTeams) {
+        await microsoftTeams.authentication.authenticate({
+          url: CONFIG.baseUrl + "/auth-start.html", width: 600, height: 535,
+        });
+        const acct = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
+        const r = await msalApp.acquireTokenSilent({ scopes: CONFIG.scopes, account: acct });
+        return r.accessToken;
+      } else {
+        const r = await msalApp.acquireTokenPopup({ scopes: CONFIG.scopes });
+        return r.accessToken;
+      }
+    } catch (e2) {
+      console.error("Token error:", e2);
+      return null;
+    }
   }
 }
 
 function logout() {
-  msalApp.logoutPopup().catch(() => msalApp.logoutRedirect());
+  const account = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
+  msalApp.logoutRedirect({ account }).catch(() => {
+    location.reload();
+  });
 }
 
 // ================================================================
 // BOOT
 // ================================================================
 async function boot() {
-  await msalApp.handleRedirectPromise().catch(() => {});
   const account = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
   if (!account) {
     document.getElementById("login-screen").style.display = "flex";
@@ -504,7 +552,12 @@ async function refreshAll() {
   icon.classList.add("spinning");
   try {
     accessToken = await getToken();
-    if (!accessToken) { icon.classList.remove("spinning"); return; }
+    if (!accessToken) {
+      icon.classList.remove("spinning");
+      document.getElementById("login-screen").style.display = "flex";
+      document.getElementById("app").style.display = "none";
+      return;
+    }
     await Promise.all([loadEmails(), loadCalendar()]);
   } finally {
     icon.classList.remove("spinning");
@@ -560,49 +613,49 @@ async function loadCalendar() {
 }
 
 // ================================================================
-// CLAUDE TRIAGE
+// CLAUDE (via your Azure Function proxy — never the key directly)
 // ================================================================
+async function callClaude(payload) {
+  if (!CONFIG.proxyUrl || CONFIG.proxyUrl.indexOf("PASTE_") === 0) {
+    throw new Error("Proxy URL not set in config.js");
+  }
+  const res = await fetch(CONFIG.proxyUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error("Proxy error: " + res.status);
+  return res.json();
+}
+
 async function triageAndRenderEmails() {
   const emails = allEmails.filter(e => !doneEmailIds.has(e.id));
-  if (!emails.length) {
-    renderEmailList([], []);
-    return;
-  }
+  if (!emails.length) { renderEmailList([], []); return; }
 
-  // Render cards immediately with loading state for AI notes
-  renderEmailList(emails, null);
+  renderEmailList(emails, null); // show cards with "Analyzing..." notes
 
-  // Then triage in background
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": CONFIG.claudeKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1000,
-        system: `You are triaging emails for Geronimo LeBaron, CSO of United Services (utility-scale solar construction, US/Mexico border region). His team: Natalie (EA), Enos (COO), Abraham (BD Chief), German (BD), Daniela (Systems), Fernanda (Project Controls), Ruth (Safety/OSHA). Classify each email and give a one-sentence action recommendation. Return ONLY a valid JSON array, no markdown.`,
-        messages: [{
-          role: "user",
-          content: `Classify these emails. Return: [{"id":"...","category":"action_required|forward|meeting_request|fyi","priority":"high|medium|low","aiNote":"one action sentence"}]. Emails: ` +
-            JSON.stringify(emails.map(e => ({
-              id: e.id,
-              from: e.from?.emailAddress?.address,
-              subject: e.subject,
-              preview: (e.bodyPreview || "").substring(0, 150),
-            })))
-        }]
-      })
+    const data = await callClaude({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1000,
+      system: `You are triaging emails for Geronimo LeBaron, CSO of United Services (utility-scale solar construction, US/Mexico border region). His team: Natalie (EA), Enos (COO), Abraham (BD Chief), German (BD), Daniela (Systems), Fernanda (Project Controls), Ruth (Safety/OSHA). Classify each email and give a one-sentence action recommendation. Return ONLY a valid JSON array, no markdown.`,
+      messages: [{
+        role: "user",
+        content: `Classify these emails. Return: [{"id":"...","category":"action_required|forward|meeting_request|fyi","priority":"high|medium|low","aiNote":"one action sentence"}]. Emails: ` +
+          JSON.stringify(emails.map(e => ({
+            id: e.id,
+            from: e.from && e.from.emailAddress ? e.from.emailAddress.address : "",
+            subject: e.subject,
+            preview: (e.bodyPreview || "").substring(0, 150),
+          })))
+      }]
     });
-    const data   = await res.json();
     const text   = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
     const match  = text.match(/\[[\s\S]*?\]/);
     const triage = match ? JSON.parse(match[0]) : [];
     renderEmailList(emails, triage);
-  } catch {
+  } catch (e) {
+    console.error("Triage error:", e);
     renderEmailList(emails, []);
   }
 }
@@ -621,7 +674,7 @@ function renderEmailList(emails, triage) {
   const triageMap = {};
   (triage || []).forEach(t => { triageMap[t.id] = t; });
 
-  updateStats(emails.map(e => triageMap[e.id]?.category || "fyi"));
+  updateStats(emails.map(e => (triageMap[e.id] && triageMap[e.id].category) || "fyi"));
   document.getElementById("stats-row").style.display = "grid";
 
   container.innerHTML = emails.map(email => {
@@ -634,10 +687,12 @@ function renderEmailList(emails, triage) {
 }
 
 function emailCard(email, cat, pri, note) {
-  const catBadge = { action_required: catTag("action_required"), forward: catTag("forward"), meeting_request: catTag("meeting_request"), fyi: catTag("fyi") }[cat] || catTag("fyi");
+  const catBadge = catTag(cat);
   const dotColor = { high: "var(--dot-high)", medium: "var(--dot-med)", low: "var(--dot-low)" }[pri] || "var(--dot-low)";
   const timeStr  = formatEmailTime(email.receivedDateTime);
   const isMtg    = cat === "meeting_request";
+  const fromName = email.from && email.from.emailAddress ? email.from.emailAddress.name : "";
+  const fromAddr = email.from && email.from.emailAddress ? email.from.emailAddress.address : "";
   return `
 <div class="card" id="card-${email.id}">
   <div class="card-top">
@@ -647,7 +702,7 @@ function emailCard(email, cat, pri, note) {
         <span>${esc(email.subject || "(no subject)")}</span>
         ${email.hasAttachments ? '<i class="ti ti-paperclip" style="font-size:13px;color:var(--text-3)" aria-label="Has attachments"></i>' : ""}
       </div>
-      <div class="card-from">${esc(email.from?.emailAddress?.name || "")} · ${esc(email.from?.emailAddress?.address || "")}</div>
+      <div class="card-from">${esc(fromName)} · ${esc(fromAddr)}</div>
       <div class="card-preview">${esc(email.bodyPreview || "")}</div>
     </div>
     <div class="card-right">
@@ -679,12 +734,11 @@ function renderCalendar() {
 }
 
 function eventCard(event) {
-  const start    = formatTime(event.start?.dateTime);
-  const end      = formatTime(event.end?.dateTime);
-  const location = event.location?.displayName;
-  const organizer = event.organizer?.emailAddress?.name;
-  const attendees = (event.attendees || []).map(a => a.emailAddress?.name || a.emailAddress?.address).filter(Boolean);
-  const catColor = { workingElsewhere: "var(--gray-bg)", tentative: "var(--amber-bg)" }[""] || "var(--gray-bg)";
+  const start    = formatTime(event.start && event.start.dateTime);
+  const end      = formatTime(event.end && event.end.dateTime);
+  const location = event.location && event.location.displayName;
+  const organizer = event.organizer && event.organizer.emailAddress ? event.organizer.emailAddress.name : "";
+  const attendees = (event.attendees || []).map(a => (a.emailAddress && (a.emailAddress.name || a.emailAddress.address))).filter(Boolean);
 
   return `
 <div class="card${event.hasConflict ? " conflict" : ""}" id="card-${event.id}">
@@ -710,11 +764,11 @@ function eventCard(event) {
 // ACTION PANEL
 // ================================================================
 function openPanel(type, itemId, isEvent) {
-  const item   = isEvent ? allEvents.find(e => e.id === itemId) : allEmails.find(e => e.id === itemId);
+  const item = isEvent ? allEvents.find(e => e.id === itemId) : allEmails.find(e => e.id === itemId);
   if (!item) return;
-  activePanel  = { type, item, isEvent: !!isEvent };
+  activePanel = { type, item, isEvent: !!isEvent };
 
-  const panel  = document.getElementById("action-panel");
+  const panel = document.getElementById("action-panel");
   panel.style.display = "block";
 
   const contextLabel = isEvent ? (item.subject || "Event") : (item.subject || "(no subject)");
@@ -754,7 +808,7 @@ function openPanel(type, itemId, isEvent) {
       <button class="danger" onclick="confirmCancel('${esc(item.subject || "this event")}','${esc(item.webLink || "#")}')"><i class="ti ti-x"></i> Cancel anyway</button>
     </div>`;
   } else if (type === "message") {
-    const attendees = (item.attendees || []).map(a => a.emailAddress?.name || a.emailAddress?.address).filter(Boolean);
+    const attendees = (item.attendees || []).map(a => (a.emailAddress && (a.emailAddress.name || a.emailAddress.address))).filter(Boolean);
     body = `<p style="font-size:13px;color:var(--text-2);margin-bottom:1rem">Draft a message to attendees: ${esc(attendees.join(", "))}.</p>
     <div id="draft-area"><div class="loading" style="padding:1rem 0"><i class="ti ti-loader spinning" style="font-size:20px"></i><p>Drafting message...</p></div></div>
     <div class="panel-actions" id="draft-actions" style="display:none">
@@ -783,54 +837,37 @@ function closePanel() {
 }
 
 // ================================================================
-// CLAUDE — DRAFT REPLY
+// CLAUDE — DRAFT REPLY / MESSAGE
 // ================================================================
 async function generateDraft(email) {
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": CONFIG.claudeKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 500,
-        system: `You are drafting a reply email in Geronimo LeBaron's voice. He is warm, visionary, strategic, relational. He uses phrases like "Right?", "So...", "I think...", "I believe...", "Does that make sense?" His tone is that of a teacher and mentor. He never uses any dash characters in his writing. Keep the reply to 3 to 5 sentences. Return ONLY the email body text. No subject line. No greeting opener. No sign-off line.`,
-        messages: [{ role: "user", content: `Draft a reply. Sender: ${email.from?.emailAddress?.name}. Subject: "${email.subject}". Content: "${(email.bodyPreview||"").substring(0,300)}"` }]
-      })
+    const fromName = email.from && email.from.emailAddress ? email.from.emailAddress.name : "";
+    const data = await callClaude({
+      model: "claude-sonnet-4-6",
+      max_tokens: 500,
+      system: `You are drafting a reply email in Geronimo LeBaron's voice. He is warm, visionary, strategic, relational. He uses phrases like "Right?", "So...", "I think...", "I believe...", "Does that make sense?" His tone is that of a teacher and mentor. He never uses any dash characters in his writing. Keep the reply to 3 to 5 sentences. Return ONLY the email body text. No subject line. No greeting opener. No sign-off line.`,
+      messages: [{ role: "user", content: `Draft a reply. Sender: ${fromName}. Subject: "${email.subject}". Content: "${(email.bodyPreview||"").substring(0,300)}"` }]
     });
-    const data = await res.json();
     const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
     showDraft(text);
-  } catch {
-    showDraft("Could not generate draft. Check your Claude API key in CONFIG.");
+  } catch (e) {
+    showDraft("Could not generate draft. Check that your Azure Function proxy is deployed and the URL is set in config.js.");
   }
 }
 
 async function generateAttendeeMessage(event) {
-  const attendees = (event.attendees || []).map(a => a.emailAddress?.name || "").filter(Boolean).join(", ");
+  const attendees = (event.attendees || []).map(a => (a.emailAddress && a.emailAddress.name) || "").filter(Boolean).join(", ");
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": CONFIG.claudeKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 400,
-        system: `You are drafting a message from Geronimo LeBaron to meeting attendees. His voice is warm, direct, and relational. No dash characters. 2 to 3 sentences.`,
-        messages: [{ role: "user", content: `Draft a brief message to the attendees (${attendees}) of the meeting "${event.subject}" to notify them of a potential update or change. Keep it open-ended since the specific message content will be filled in.` }]
-      })
+    const data = await callClaude({
+      model: "claude-sonnet-4-6",
+      max_tokens: 400,
+      system: `You are drafting a message from Geronimo LeBaron to meeting attendees. His voice is warm, direct, and relational. No dash characters. 2 to 3 sentences.`,
+      messages: [{ role: "user", content: `Draft a brief message to the attendees (${attendees}) of the meeting "${event.subject}" to notify them of a potential update or change. Keep it open-ended since the specific message content will be filled in.` }]
     });
-    const data = await res.json();
     const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
     showDraft(text);
-  } catch {
-    showDraft("Could not generate draft. Check your Claude API key.");
+  } catch (e) {
+    showDraft("Could not generate draft. Check that your Azure Function proxy is deployed and the URL is set in config.js.");
   }
 }
 
@@ -852,14 +889,13 @@ function showDraft(text) {
 }
 
 // ================================================================
-// CLAUDE — FIND AVAILABLE SLOTS
+// FIND AVAILABLE SLOTS
 // ================================================================
 async function findAvailableSlots() {
   try {
-    // Get current week range
-    const now   = new Date();
+    const now     = new Date();
     const weekEnd = new Date(now); weekEnd.setDate(now.getDate() + 5);
-    const token = await getToken();
+    const token   = await getToken();
     if (!token) throw new Error("No token");
 
     const data = await fetch(
@@ -875,7 +911,6 @@ async function findAvailableSlots() {
       end:   new Date(e.end.dateTime),
     }));
 
-    // Find 3 open 1-hour windows during business hours (8am-6pm, skip 12-1pm rest)
     const slots = [];
     let check = new Date(now);
     check.setMinutes(0,0,0);
@@ -931,7 +966,7 @@ function confirmCancel(title, link) {
 }
 
 // ================================================================
-// TABS
+// TABS / DONE / HELPERS
 // ================================================================
 function switchTab(tab) {
   activeTab = tab;
@@ -942,9 +977,6 @@ function switchTab(tab) {
   document.querySelectorAll(".tab")[tab === "email" ? 0 : 1].classList.add("active");
 }
 
-// ================================================================
-// MARK DONE
-// ================================================================
 function markDone(emailId) {
   doneEmailIds.add(emailId);
   const card = document.getElementById("card-" + emailId);
@@ -954,18 +986,15 @@ function markDone(emailId) {
     setTimeout(() => {
       if (card.parentNode) card.parentNode.removeChild(card);
       const emails = allEmails.filter(e => !doneEmailIds.has(e.id));
-      updateStats(emails.map(() => "fyi")); // approximate
+      updateStats(emails.map(() => "fyi"));
       if (!emails.length) {
         document.getElementById("email-view").innerHTML = '<div class="empty"><i class="ti ti-inbox"></i><p>All caught up. Inbox is clear.</p></div>';
       }
     }, 200);
   }
-  if (activePanel?.item?.id === emailId) closePanel();
+  if (activePanel && activePanel.item && activePanel.item.id === emailId) closePanel();
 }
 
-// ================================================================
-// HELPERS
-// ================================================================
 function updateStats(categories) {
   const total  = categories.length;
   const action = categories.filter(c => c === "action_required").length;
@@ -993,15 +1022,15 @@ function catTag(cat) {
 
 function detectConflicts(events) {
   return events.map((event, i) => {
-    const s = new Date(event.start?.dateTime);
-    const e = new Date(event.end?.dateTime);
+    const s = new Date(event.start && event.start.dateTime);
+    const e = new Date(event.end && event.end.dateTime);
     const conflict = events.find((other, j) => {
       if (i === j) return false;
-      const os = new Date(other.start?.dateTime);
-      const oe = new Date(other.end?.dateTime);
+      const os = new Date(other.start && other.start.dateTime);
+      const oe = new Date(other.end && other.end.dateTime);
       return s < oe && e > os;
     });
-    return { ...event, hasConflict: !!conflict, conflictWith: conflict?.subject || null };
+    return Object.assign({}, event, { hasConflict: !!conflict, conflictWith: (conflict && conflict.subject) || null });
   });
 }
 
@@ -1028,14 +1057,18 @@ function showLoading(containerId, label) {
     `<div class="loading"><i class="ti ti-loader spinning"></i><p>${label}</p></div>`;
 }
 
+function showLoginError(msg) {
+  const el = document.getElementById("login-err");
+  el.textContent = msg;
+  el.style.display = "block";
+}
+function hideLoginError() {
+  document.getElementById("login-err").style.display = "none";
+}
+
 function esc(str) {
   return String(str || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 }
-
-// ================================================================
-// INIT
-// ================================================================
-// boot() called inside window load event
 </script>
 </body>
 </html>

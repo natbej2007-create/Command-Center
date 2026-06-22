@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Finishing sign in...</title>
+  <script src="https://res.cdn.office.net/teams-js/2.24.0/js/MicrosoftTeams.min.js"></script>
+  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; display:flex; align-items:center;
+           justify-content:center; height:100vh; margin:0; color:#444; }
+  </style>
+</head>
+<body>
+  <p>Almost there...</p>
+  <script src="config.js"></script>
+  <script>
+    // This page receives the Microsoft redirect, finishes the login,
+    // stores the account, then tells Teams the popup succeeded.
+    microsoftTeams.app.initialize().then(function () {
+      var cfg = window.CC_CONFIG;
+      var msalApp = new msal.PublicClientApplication({
+        auth: {
+          clientId: cfg.clientId,
+          authority: "https://login.microsoftonline.com/" + cfg.tenantId,
+          redirectUri: cfg.baseUrl + "/auth-end.html"
+        },
+        cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
+      });
+
+      msalApp.initialize().then(function () {
+        return msalApp.handleRedirectPromise();
+      }).then(function (result) {
+        if (result && result.account) {
+          msalApp.setActiveAccount(result.account);
+          // The account is now cached in localStorage (shared origin),
+          // so the main tab can acquire tokens silently.
+          microsoftTeams.authentication.notifySuccess("ok");
+        } else {
+          microsoftTeams.authentication.notifyFailure("no-account");
+        }
+      }).catch(function (e) {
+        microsoftTeams.authentication.notifyFailure(String(e));
+      });
+    }).catch(function (e) {
+      document.body.innerHTML = "<p>Sign in could not complete: " + e + "</p>";
+    });
+  </script>
+</body>
+</html>
