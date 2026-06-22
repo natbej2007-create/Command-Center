@@ -429,9 +429,27 @@ let inTeams      = false;
 let accessToken  = null;
 let activePanel  = null;
 let activeTab    = "email";
-let doneEmailIds = new Set();
 let allEmails    = [];
 let allEvents    = [];
+
+// ---- Lightweight local memory (per browser): cleared items + last visit ----
+const CC_STORE = "cc_state_v1";
+function ccLoad() { try { return JSON.parse(localStorage.getItem(CC_STORE)) || {}; } catch (e) { return {}; } }
+function ccSave(s) { try { localStorage.setItem(CC_STORE, JSON.stringify(s)); } catch (e) {} }
+const ccState = ccLoad();
+// Items cleared with Done stay cleared across visits.
+let doneEmailIds = new Set(ccState.doneIds || []);
+// "New" = arrived since the previous time you opened the app.
+const sessionLastSeen = ccState.lastSeen ? new Date(ccState.lastSeen) : new Date();
+ccState.lastSeen = new Date().toISOString();
+ccSave(ccState);
+function isNewEmail(e) {
+  return !!(e && e.receivedDateTime && new Date(e.receivedDateTime) > sessionLastSeen);
+}
+function persistDone() {
+  ccState.doneIds = Array.from(doneEmailIds);
+  ccSave(ccState);
+}
 
 // ================================================================
 // INIT
@@ -589,7 +607,9 @@ async function loadEmails() {
       "&$select=id,subject,from,receivedDateTime,bodyPreview,isRead,importance,hasAttachments,webLink"
     );
     allEmails = data.value || [];
-    doneEmailIds = new Set();
+    const present = new Set(allEmails.map(e => e.id));
+    doneEmailIds = new Set(Array.from(doneEmailIds).filter(id => present.has(id)));
+    persistDone();
     await triageAndRenderEmails();
   } catch (e) {
     document.getElementById("email-view").innerHTML =
@@ -689,11 +709,11 @@ function renderEmailList(emails, triage) {
     const pri = t.priority  || "low";
     const note = triage === null ? "Analyzing..." : (t.aiNote || "");
     const draft = triage === null ? "" : (t.draftReply || "");
-    return emailCard(email, cat, pri, note, draft);
+    return emailCard(email, cat, pri, note, draft, isNewEmail(email));
   }).join("");
 }
 
-function emailCard(email, cat, pri, note, draft) {
+function emailCard(email, cat, pri, note, draft, isNew) {
   const catBadge = catTag(cat);
   const dotColor = { high: "var(--dot-high)", medium: "var(--dot-med)", low: "var(--dot-low)" }[pri] || "var(--dot-low)";
   const timeStr  = formatEmailTime(email.receivedDateTime);
@@ -706,6 +726,7 @@ function emailCard(email, cat, pri, note, draft) {
     <span class="priority-dot" style="background:${dotColor}"></span>
     <div class="card-meta">
       <div class="card-subject">
+        ${isNew ? '<span class="badge" style="background:var(--blue-bg);color:var(--blue-fg);font-size:10px;padding:2px 6px;flex-shrink:0">New</span>' : ""}
         <span>${esc(email.subject || "(no subject)")}</span>
         ${email.hasAttachments ? '<i class="ti ti-paperclip" style="font-size:13px;color:var(--text-3)" aria-label="Has attachments"></i>' : ""}
       </div>
@@ -1091,6 +1112,7 @@ function dayAvailabilityCard(dayDate, events) {
 
 function markDone(emailId) {
   doneEmailIds.add(emailId);
+  persistDone();
   const card = document.getElementById("card-" + emailId);
   if (card) {
     card.style.opacity = "0";
