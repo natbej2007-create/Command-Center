@@ -569,7 +569,7 @@ async function refreshAll() {
 // ================================================================
 async function graphGet(url) {
   const res = await fetch("https://graph.microsoft.com/v1.0" + url, {
-    headers: { Authorization: "Bearer " + accessToken }
+    headers: { Authorization: "Bearer " + accessToken, Prefer: 'outlook.timezone="UTC"' }
   });
   if (!res.ok) throw new Error("Graph error: " + res.status);
   return res.json();
@@ -737,6 +737,8 @@ function renderCalendar() {
 function eventCard(event) {
   const start    = formatTime(event.start && event.start.dateTime);
   const end      = formatTime(event.end && event.end.dateTime);
+  const sInst    = toInstant(event.start && event.start.dateTime);
+  const eInst    = toInstant(event.end && event.end.dateTime);
   const location = event.location && event.location.displayName;
   const organizer = event.organizer && event.organizer.emailAddress ? event.organizer.emailAddress.name : "";
   const attendees = (event.attendees || []).map(a => (a.emailAddress && (a.emailAddress.name || a.emailAddress.address))).filter(Boolean);
@@ -748,6 +750,7 @@ function eventCard(event) {
     <div style="flex:1">
       <div class="event-title">${esc(event.subject || "(no title)")}</div>
       <div class="event-meta"><i class="ti ti-clock" style="font-size:13px"></i>${start} to ${end}</div>
+      ${zonesBlock(sInst, eInst)}
       ${location ? `<div class="event-meta"><i class="ti ti-video" style="font-size:13px"></i>${esc(location)}</div>` : ""}
       ${organizer ? `<div class="event-meta"><i class="ti ti-user" style="font-size:13px"></i>${esc(organizer)}</div>` : ""}
       ${attendees.length ? `<div class="event-meta"><i class="ti ti-users" style="font-size:13px"></i>${esc(attendees.join(", "))}</div>` : ""}
@@ -904,12 +907,12 @@ async function findAvailableSlots() {
       "?startdatetime=" + now.toISOString() +
       "&enddatetime=" + weekEnd.toISOString() +
       "&$select=subject,start,end&$top=50&$orderby=start/dateTime",
-      { headers: { Authorization: "Bearer " + token } }
+      { headers: { Authorization: "Bearer " + token, Prefer: 'outlook.timezone="UTC"' } }
     ).then(r => r.json());
 
     const busySlots = (data.value || []).map(e => ({
-      start: new Date(e.start.dateTime),
-      end:   new Date(e.end.dateTime),
+      start: toInstant(e.start.dateTime),
+      end:   toInstant(e.end.dateTime),
     }));
 
     const slots = [];
@@ -926,7 +929,7 @@ async function findAvailableSlots() {
         if (!conflict) {
           const score = slots.length === 0 ? "best" : slots.length === 1 ? "good" : "ok";
           const reason = h < 10 ? "Early morning, good focus block" : h < 13 ? "Mid-morning, calendar clear" : "Afternoon open block";
-          slots.push({ slot: formatSlot(check, slotEnd), score, reason });
+          slots.push({ slot: formatSlot(check, slotEnd), score, reason, start: new Date(check), end: new Date(slotEnd) });
         }
       }
       check.setHours(check.getHours()+1);
@@ -951,6 +954,7 @@ function slotCard(slot) {
     <div class="slot-info">
       <div class="slot-time">${esc(slot.slot)}</div>
       <div class="slot-reason">${esc(slot.reason)}</div>
+      ${zonesBlock(slot.start, slot.end)}
     </div>
     <div class="slot-actions">
       <span class="badge" style="background:${color};color:${fg}">${slot.score}</span>
@@ -1023,21 +1027,53 @@ function catTag(cat) {
 
 function detectConflicts(events) {
   return events.map((event, i) => {
-    const s = new Date(event.start && event.start.dateTime);
-    const e = new Date(event.end && event.end.dateTime);
+    const s = toInstant(event.start && event.start.dateTime);
+    const e = toInstant(event.end && event.end.dateTime);
     const conflict = events.find((other, j) => {
       if (i === j) return false;
-      const os = new Date(other.start && other.start.dateTime);
-      const oe = new Date(other.end && other.end.dateTime);
+      const os = toInstant(other.start && other.start.dateTime);
+      const oe = toInstant(other.end && other.end.dateTime);
       return s < oe && e > os;
     });
     return Object.assign({}, event, { hasConflict: !!conflict, conflictWith: (conflict && conflict.subject) || null });
   });
 }
 
+// Zones to label every time in (US/Mexico border coverage).
+const TZONES = [
+  { tz: "America/Los_Angeles", label: "PT" },
+  { tz: "America/Denver",      label: "MT" },
+  { tz: "America/Phoenix",     label: "AZ/Son" },
+  { tz: "America/Chicago",     label: "CT" },
+];
+
+// Graph returns UTC without a trailing Z; treat zone-less strings as UTC
+// so the absolute instant is always correct before we re-display it.
+function toInstant(dt) {
+  if (!dt) return null;
+  return new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(dt) ? dt : dt + "Z");
+}
+
+function tzTime(instant, tz) {
+  if (!instant) return "";
+  return new Intl.DateTimeFormat("en-US", { timeZone: tz, hour:"numeric", minute:"2-digit", hour12:true }).format(instant);
+}
+
+// Compact multi-zone block for an event or a slot.
+function zonesBlock(startInstant, endInstant) {
+  if (!startInstant) return "";
+  return `<div style="margin-top:6px;display:grid;grid-template-columns:auto 1fr;gap:2px 8px">` +
+    TZONES.map(z =>
+      `<span style="font-size:11px;color:var(--text-3);font-weight:500">${z.label}</span>` +
+      `<span style="font-size:11px;color:var(--text-2)">${tzTime(startInstant, z.tz)}${endInstant ? " to " + tzTime(endInstant, z.tz) : ""}</span>`
+    ).join("") +
+    `</div>`;
+}
+
 function formatTime(dt) {
-  if (!dt) return "";
-  return new Date(dt).toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit", hour12:true });
+  const inst = toInstant(dt);
+  if (!inst) return "";
+  return inst.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit", hour12:true });
 }
 
 function formatEmailTime(dt) {
