@@ -749,18 +749,44 @@ function renderEmailList(emails, triage) {
   updateStats(emails.map(e => (triageMap[e.id] && triageMap[e.id].category) || "fyi"));
   document.getElementById("stats-row").style.display = "grid";
 
-  container.innerHTML = emails.map(email => {
+  const analyzing = triage === null;
+  const rendered = emails.map(email => {
     const t   = triageMap[email.id] || {};
     const cat = t.category || "fyi";
     const pri = t.priority  || "low";
-    const note = triage === null ? "Analyzing..." : (t.aiNote || "");
-    const draft = triage === null ? "" : (t.draftReply || "");
-    return emailCard(email, cat, pri, note, draft, isNewEmail(email));
-  }).join("");
+    const note = analyzing ? "Analyzing..." : (t.aiNote || "");
+    const draft = analyzing ? "" : (t.draftReply || "");
+    return { cat: cat, html: emailCard(email, cat, pri, note, draft, isNewEmail(email)) };
+  });
+
+  if (analyzing) {
+    container.innerHTML = rendered.map(r => r.html).join("");
+    return;
+  }
+
+  const lanes = [
+    { key: "action_required", label: "Action required",  color: "var(--red-fg)" },
+    { key: "meeting_request", label: "Meeting requests", color: "var(--blue-fg)" },
+    { key: "forward",         label: "To forward",       color: "var(--amber-fg)" },
+    { key: "fyi",             label: "FYI · monitor",    color: "var(--gray-fg)" },
+  ];
+  const known = lanes.map(l => l.key);
+  let html = "";
+  lanes.forEach(lane => {
+    const items = rendered.filter(r => (lane.key === "fyi" ? !known.includes(r.cat) || r.cat === "fyi" : r.cat === lane.key));
+    if (!items.length) return;
+    html += laneHeader(lane.label, items.length, lane.color);
+    html += items.map(r => r.html).join("");
+  });
+  container.innerHTML = html;
+}
+
+function laneHeader(label, count, color) {
+  return '<div style="border-left:3px solid ' + color + ';background:var(--bg-2);padding:7px 12px;font-size:13px;font-weight:500;color:var(--text);border-radius:0;margin:14px 0 8px">' +
+    esc(label) + ' <span style="color:var(--text-3);font-weight:400">· ' + count + '</span></div>';
 }
 
 function emailCard(email, cat, pri, note, draft, isNew) {
-  const catBadge = catTag(cat);
   const dotColor = { high: "var(--dot-high)", medium: "var(--dot-med)", low: "var(--dot-low)" }[pri] || "var(--dot-low)";
   const timeStr  = formatEmailTime(email.receivedDateTime);
   const isMtg    = cat === "meeting_request";
@@ -781,7 +807,7 @@ function emailCard(email, cat, pri, note, draft, isNew) {
     </div>
     <div class="card-right">
       <div class="card-time">${timeStr}</div>
-      ${catBadge}
+      <span class="badge" style="background:var(--${pri === 'high' ? 'red' : pri === 'medium' ? 'amber' : 'green'}-bg);color:var(--${pri === 'high' ? 'red' : pri === 'medium' ? 'amber' : 'green'}-fg);font-size:10px;padding:2px 7px">${pri === 'high' ? 'High' : pri === 'medium' ? 'Med' : 'Low'}</span>
     </div>
   </div>
   ${note ? `<div class="ai-note"><i class="ti ti-bulb" style="font-size:14px;flex-shrink:0;margin-top:1px"></i><span>${esc(note)}</span></div>` : ""}
@@ -805,7 +831,30 @@ function renderCalendar() {
     container.innerHTML = '<div class="empty"><i class="ti ti-calendar"></i><p>No events in the next 7 days.</p></div>';
     return;
   }
-  container.innerHTML = allEvents.map(event => eventCard(event)).join("");
+  const wkStart = d => { const x = new Date(d); x.setHours(0,0,0,0); x.setDate(x.getDate() - x.getDay()); return x; };
+  const evDate = ev => {
+    if (ev.isAllDay) { const dp = ((ev.start && ev.start.dateTime) || "").slice(0,10); return dp ? new Date(dp + "T12:00:00") : new Date(); }
+    return toInstant(ev.start && ev.start.dateTime) || new Date();
+  };
+  const todayWk = wkStart(new Date()).getTime();
+  const groups = {};
+  allEvents.forEach(ev => {
+    const ws = wkStart(evDate(ev));
+    const key = ws.getTime();
+    if (!groups[key]) groups[key] = { ws: ws, items: [] };
+    groups[key].items.push(ev);
+  });
+  let html = "";
+  Object.keys(groups).map(Number).sort((a, b) => a - b).forEach(k => {
+    const g = groups[k];
+    const diff = Math.round((k - todayWk) / (7 * 86400000));
+    const wkEnd = new Date(g.ws); wkEnd.setDate(wkEnd.getDate() + 6);
+    const label = diff === 0 ? "This week" : diff === 1 ? "Next week" : "Week of " + g.ws.toLocaleDateString("en-US", { month:"short", day:"numeric" });
+    const range = g.ws.toLocaleDateString("en-US", { month:"short", day:"numeric" }) + " to " + wkEnd.toLocaleDateString("en-US", { month:"short", day:"numeric" });
+    html += laneHeader(label + "  ·  " + range, g.items.length, "var(--blue-fg)");
+    html += g.items.map(eventCard).join("");
+  });
+  container.innerHTML = html;
 }
 
 function eventCard(event) {
@@ -831,7 +880,6 @@ function eventCard(event) {
       <div class="event-meta"><i class="ti ti-clock" style="font-size:13px"></i>${allDay ? "All day" : (start + " to " + end)}</div>
       ${allDay ? "" : zonesBlock(sInst, eInst)}
       ${location ? `<div class="event-meta"><i class="ti ti-video" style="font-size:13px"></i>${esc(location)}</div>` : ""}
-      ${organizer ? `<div class="event-meta"><i class="ti ti-user" style="font-size:13px"></i>${esc(organizer)}</div>` : ""}
       ${attendees.length ? `<div class="event-meta"><i class="ti ti-users" style="font-size:13px"></i>${esc(attendees.join(", "))}</div>` : ""}
     </div>
   </div>
@@ -1143,21 +1191,24 @@ function dayAvailabilityCard(dayDate, events) {
     ? windows.map(w => {
         const sISO = w.s.toISOString(), eISO = w.e.toISOString();
         return `<div class="slot-card">
+           <span style="width:8px;height:8px;border-radius:50%;background:var(--green-fg);flex-shrink:0"></span>
            <div class="slot-info">
              <div class="slot-time">${formatTime(sISO)} to ${formatTime(eISO)}</div>
              <div class="slot-reason" style="font-size:11px;color:var(--text-3)">${TZONES.map(z => z.label + " " + tzTime(w.s, z.tz)).join("  ·  ")}</div>
            </div>
            <div class="slot-actions">
-             <button onclick="openAddEventPanel('${sISO}','${eISO}')"><i class="ti ti-calendar-plus"></i> Add</button>
+             <button onclick="openAddEventPanel('${sISO}','${eISO}')" style="background:var(--green-bg);color:var(--green-fg)"><i class="ti ti-plus"></i> Add</button>
            </div>
          </div>`;
       }).join("")
-    : `<div class="slot-reason" style="padding:8px 2px;color:var(--text-2)">No open windows in business hours.</div>`;
+    : `<div class="slot-reason" style="padding:8px 12px;color:var(--text-2)">No open windows in business hours.</div>`;
 
-  return `<div class="card">
-    <div class="event-title">${label}${isToday ? ' <span class="badge" style="background:var(--blue-bg);color:var(--blue-fg);margin-left:6px">Today</span>' : ''}</div>
-    <div style="margin-top:10px">${body}</div>
-  </div>`;
+  const header = '<div style="border-left:3px solid var(--green-fg);background:var(--green-bg);padding:7px 12px;font-size:13px;font-weight:500;color:var(--green-fg);border-radius:0;margin:14px 0 6px">' +
+    esc(label) +
+    (isToday ? ' <span style="font-weight:400;opacity:.8">· Today</span>' : '') +
+    (windows.length ? ' <span style="font-weight:400;opacity:.7">· ' + windows.length + ' open</span>' : '') +
+    '</div>';
+  return header + body;
 }
 
 // ================================================================
