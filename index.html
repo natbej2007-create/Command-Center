@@ -451,6 +451,27 @@ function persistDone() {
   ccSave(ccState);
 }
 
+// ---- Known people (email -> name), remembered for faster attendee entry ----
+let knownContacts = {};
+try { knownContacts = JSON.parse(localStorage.getItem("cc_contacts")) || {}; } catch (e) { knownContacts = {}; }
+function saveContacts() { try { localStorage.setItem("cc_contacts", JSON.stringify(knownContacts)); } catch (e) {} }
+function addContact(email, name) {
+  if (!email) return;
+  email = String(email).trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return;
+  if (!knownContacts[email] || (name && name.length > (knownContacts[email] || "").length)) {
+    knownContacts[email] = name || knownContacts[email] || "";
+  }
+}
+function collectContacts() {
+  (allEmails || []).forEach(e => { const a = e.from && e.from.emailAddress; if (a) addContact(a.address, a.name); });
+  (allEvents || []).forEach(ev => {
+    const o = ev.organizer && ev.organizer.emailAddress; if (o) addContact(o.address, o.name);
+    (ev.attendees || []).forEach(at => { const a = at.emailAddress; if (a) addContact(a.address, a.name); });
+  });
+  saveContacts();
+}
+
 // ================================================================
 // INIT
 // ================================================================
@@ -583,6 +604,7 @@ async function refreshAll() {
       return;
     }
     await Promise.all([loadEmails(), loadCalendar()]);
+    collectContacts();
   } finally {
     icon.classList.remove("spinning");
   }
@@ -1167,6 +1189,35 @@ async function resumePendingEvent() {
   } catch (e) {}
 }
 
+function addAttendee(email) {
+  const el = document.getElementById("ev-attendees");
+  if (!el) return;
+  const cur = el.value.split(",").map(s => s.trim()).filter(Boolean);
+  if (!cur.map(s => s.toLowerCase()).includes(email.toLowerCase())) cur.push(email);
+  el.value = cur.join(", ");
+  el.focus();
+}
+
+function contactChipsHtml() {
+  const emails = Object.keys(knownContacts).slice(0, 12);
+  if (!emails.length) return "";
+  return '<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px">' +
+    '<span style="font-size:11px;color:var(--text-3);align-self:center;margin-right:2px">Quick add:</span>' +
+    emails.map(em => {
+      const nm = knownContacts[em] || em;
+      return '<button type="button" onclick="addAttendee(\'' + em + '\')" style="font-size:12px;padding:4px 10px;border-radius:999px;background:var(--bg-2);border:0.5px solid var(--border-2);color:var(--text)">' + esc(nm) + '</button>';
+    }).join("") +
+    '</div>';
+}
+
+function contactsDatalistHtml() {
+  const emails = Object.keys(knownContacts);
+  if (!emails.length) return "";
+  return '<datalist id="cc-contacts">' +
+    emails.map(em => '<option value="' + esc(em) + '">' + esc(knownContacts[em] || "") + '</option>').join("") +
+    '</datalist>';
+}
+
 function openAddEventPanel(sISO, eISO) {
   activePanel = { type: "addEvent" };
   const s = new Date(sISO), e = new Date(eISO);
@@ -1182,7 +1233,9 @@ function openAddEventPanel(sISO, eISO) {
     '</div>' +
     '<div class="panel-context">' + esc(dateLine) + '<div style="font-size:11px;color:var(--text-3);margin-top:4px">' + zoneLine + '</div></div>' +
     '<input id="ev-title" placeholder="Event title" style="' + inputStyle + ';margin-bottom:8px" />' +
-    '<input id="ev-attendees" placeholder="Attendee emails, comma separated (optional)" style="' + inputStyle + '" />' +
+    '<input id="ev-attendees" list="cc-contacts" placeholder="Attendee emails, comma separated (optional)" style="' + inputStyle + '" />' +
+    contactChipsHtml() +
+    contactsDatalistHtml() +
     '<div class="panel-actions">' +
       '<button class="primary" onclick="createEvent(\'' + sISO + '\',\'' + eISO + '\')"><i class="ti ti-check"></i> Create event</button>' +
       '<button onclick="closePanel()">Cancel</button>' +
@@ -1198,6 +1251,7 @@ async function createEvent(sISO, eISO) {
   const status  = document.getElementById("ev-status");
   const title   = ((titleEl && titleEl.value) || "").trim();
   const attStr  = ((attEl && attEl.value) || "").trim();
+  if (attStr) { attStr.split(",").map(x => x.trim()).filter(Boolean).forEach(em => addContact(em)); saveContacts(); }
   if (!title) { if (status) { status.style.color = "var(--red-fg)"; status.textContent = "Please type an event title first."; } return; }
   if (status) { status.style.color = "var(--text-2)"; status.textContent = "Creating the event..."; }
 
