@@ -1252,34 +1252,75 @@ function contactsDatalistHtml() {
     '</datalist>';
 }
 
+// The open window the user tapped Add on (used to anchor the date).
+let addWindowISO = null;
+
+// Compute the chosen start/end from the Start time field and Length selector.
+function chosenStartEnd() {
+  const base = new Date(addWindowISO);
+  const timeVal = (document.getElementById("ev-start") || {}).value || "";
+  const dur = parseInt((document.getElementById("ev-duration") || {}).value || "30", 10);
+  let hh = base.getHours(), mm = base.getMinutes();
+  const m = /^(\d{1,2}):(\d{2})$/.exec(timeVal);
+  if (m) { hh = +m[1]; mm = +m[2]; }
+  const start = new Date(base); start.setHours(hh, mm, 0, 0);
+  const end = new Date(start.getTime() + dur * 60000);
+  return { start: start, end: end };
+}
+
+// Live preview of exactly what will be booked, across zones.
+function updateSlotPreview() {
+  const el = document.getElementById("ev-preview");
+  if (!el || !addWindowISO) return;
+  const se = chosenStartEnd();
+  const dateStr = se.start.toLocaleDateString("en-US", { weekday:"short", month:"short", day:"numeric" });
+  const local = formatTime(se.start.toISOString()) + " to " + formatTime(se.end.toISOString());
+  const zones = TZONES.map(z => z.label + " " + tzTime(se.start, z.tz)).join("  ·  ");
+  el.innerHTML =
+    '<div style="font-size:11px;color:var(--green-fg);font-weight:600;margin-bottom:2px">Your event</div>' +
+    '<div style="font-size:13px;color:var(--text);font-weight:500">' + esc(dateStr + ", " + local) + '</div>' +
+    '<div style="font-size:11px;color:var(--text-3);margin-top:3px">' + zones + '</div>';
+}
+
 function openAddEventPanel(sISO, eISO) {
   activePanel = { type: "addEvent" };
+  addWindowISO = sISO;
   const s = new Date(sISO), e = new Date(eISO);
   const panel = document.getElementById("action-panel");
   panel.style.display = "block";
-  const zoneLine = TZONES.map(z => z.label + " " + tzTime(s, z.tz) + " to " + tzTime(e, z.tz)).join("  ·  ");
-  const dateLine = s.toLocaleDateString("en-US", { weekday:"long", month:"short", day:"numeric" }) + ",  " + formatTime(sISO) + " to " + formatTime(eISO);
+  const pad = n => String(n).padStart(2, "0");
+  const startVal = pad(s.getHours()) + ":" + pad(s.getMinutes());
+  const windowZones = TZONES.map(z => z.label + " " + tzTime(s, z.tz) + " to " + tzTime(e, z.tz)).join("  ·  ");
+  const windowLine = s.toLocaleDateString("en-US", { weekday:"long", month:"short", day:"numeric" }) + ",  " + formatTime(sISO) + " to " + formatTime(eISO);
   const inputStyle = "width:100%;padding:10px 12px;border:0.5px solid var(--border-2);border-radius:var(--radius);background:var(--bg-2);color:var(--text);font-family:inherit;font-size:14px";
   panel.innerHTML =
     '<div class="panel-header">' +
       '<div class="panel-title"><i class="ti ti-calendar-plus" style="font-size:16px;color:var(--text-2)"></i>New event</div>' +
       '<button onclick="closePanel()" aria-label="Close"><i class="ti ti-x" style="font-size:16px"></i></button>' +
     '</div>' +
-    '<div class="panel-context">' + esc(dateLine) + '<div style="font-size:11px;color:var(--text-3);margin-top:4px">' + zoneLine + '</div></div>' +
+    '<div class="panel-context"><div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">Open window</div>' + esc(windowLine) + '<div style="font-size:11px;color:var(--text-3);margin-top:4px">' + windowZones + '</div></div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:8px">' +
+      '<div style="flex:1"><label style="font-size:11px;color:var(--text-3);display:block;margin-bottom:3px">Start</label>' +
+        '<input type="time" id="ev-start" value="' + startVal + '" onchange="updateSlotPreview()" style="' + inputStyle + '" /></div>' +
+      '<div style="flex:1"><label style="font-size:11px;color:var(--text-3);display:block;margin-bottom:3px">Length</label>' +
+        '<select id="ev-duration" onchange="updateSlotPreview()" style="' + inputStyle + '"><option value="30">30 minutes</option><option value="60">1 hour</option></select></div>' +
+    '</div>' +
+    '<div id="ev-preview" style="background:var(--green-bg);border-radius:var(--radius);padding:8px 10px;margin-bottom:10px"></div>' +
     '<input id="ev-title" placeholder="Event title" style="' + inputStyle + ';margin-bottom:8px" />' +
     '<input id="ev-attendees" list="cc-contacts" placeholder="Attendee emails, comma separated (optional)" style="' + inputStyle + '" />' +
     contactChipsHtml() +
     contactsDatalistHtml() +
     '<div class="panel-actions">' +
-      '<button class="primary" onclick="bookSlot(\'' + sISO + '\',\'' + eISO + '\')"><i class="ti ti-check"></i> Create event</button>' +
+      '<button class="primary" onclick="bookSlot()"><i class="ti ti-check"></i> Create event</button>' +
       '<button onclick="closePanel()">Cancel</button>' +
     '</div>' +
     '<div id="ev-status" style="font-size:13px;color:var(--text-2);margin-top:8px"></div>';
+  updateSlotPreview();
   panel.scrollIntoView({ behavior:"smooth", block:"nearest" });
   setTimeout(() => { const t = document.getElementById("ev-title"); if (t) t.focus(); }, 60);
 }
 
-async function bookSlot(sISO, eISO) {
+async function bookSlot() {
   const titleEl = document.getElementById("ev-title");
   const attEl   = document.getElementById("ev-attendees");
   const status  = document.getElementById("ev-status");
@@ -1287,6 +1328,8 @@ async function bookSlot(sISO, eISO) {
   const attStr  = ((attEl && attEl.value) || "").trim();
   if (attStr) { attStr.split(",").map(x => x.trim()).filter(Boolean).forEach(em => addContact(em)); saveContacts(); }
   if (!title) { if (status) { status.style.color = "var(--red-fg)"; status.textContent = "Please type an event title first."; } return; }
+  const se = chosenStartEnd();
+  const sISO = se.start.toISOString(), eISO = se.end.toISOString();
   if (status) { status.style.color = "var(--text-2)"; status.textContent = "Creating the event..."; }
 
   const token = await getWriteTokenSilent();
