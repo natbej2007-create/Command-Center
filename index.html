@@ -1184,11 +1184,22 @@ async function graphPost(path, body, token) {
   return res.json();
 }
 
+// Produce a "YYYY-MM-DDTHH:mm:ss" string in the browser's local wall clock.
+function localWallClock(d) {
+  const p = n => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+    "T" + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+}
+
 function buildEventBody(title, sISO, eISO, attStr) {
+  // Create the event in the user's own time zone so Outlook shows it correctly
+  // (not as UTC). dateTime is the local wall clock; timeZone is the IANA zone.
+  const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone) || "UTC";
+  const s = new Date(sISO), e = new Date(eISO);
   const body = {
     subject: title,
-    start: { dateTime: sISO.slice(0, 19), timeZone: "UTC" },
-    end:   { dateTime: eISO.slice(0, 19), timeZone: "UTC" },
+    start: { dateTime: localWallClock(s), timeZone: tz },
+    end:   { dateTime: localWallClock(e), timeZone: tz },
   };
   if (attStr) {
     body.attendees = attStr.split(",").map(x => x.trim()).filter(Boolean)
