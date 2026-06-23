@@ -1260,7 +1260,7 @@ function openAddEventPanel(sISO, eISO) {
     contactChipsHtml() +
     contactsDatalistHtml() +
     '<div class="panel-actions">' +
-      '<button class="primary" onclick="createEvent(\'' + sISO + '\',\'' + eISO + '\')"><i class="ti ti-check"></i> Create event</button>' +
+      '<button class="primary" onclick="bookSlot(\'' + sISO + '\',\'' + eISO + '\')"><i class="ti ti-check"></i> Create event</button>' +
       '<button onclick="closePanel()">Cancel</button>' +
     '</div>' +
     '<div id="ev-status" style="font-size:13px;color:var(--text-2);margin-top:8px"></div>';
@@ -1268,7 +1268,7 @@ function openAddEventPanel(sISO, eISO) {
   setTimeout(() => { const t = document.getElementById("ev-title"); if (t) t.focus(); }, 60);
 }
 
-async function createEvent(sISO, eISO) {
+async function bookSlot(sISO, eISO) {
   const titleEl = document.getElementById("ev-title");
   const attEl   = document.getElementById("ev-attendees");
   const status  = document.getElementById("ev-status");
