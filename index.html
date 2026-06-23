@@ -585,12 +585,37 @@ function logout() {
 // BOOT
 // ================================================================
 let userName = "", userTitle = "";
+function effectiveTitle() {
+  // A title the person typed (saved on their device) wins; otherwise their
+  // Microsoft profile title; otherwise none.
+  return (ccState.title || "").trim() || (userTitle || "").trim();
+}
 function updateHeader() {
   const el = document.getElementById("user-info");
   if (!el) return;
-  const role = userTitle ? userTitle + ", United Services" : "United Services";
+  const title = effectiveTitle();
   const date = new Date().toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" });
-  el.textContent = (userName || "") + " · " + role + " · " + date;
+  const role = title
+    ? esc(title) + ", United Services"
+    : "United Services · <span style='color:var(--blue-fg)'>add your title</span>";
+  el.innerHTML = esc(userName || "") +
+    " · <span onclick='editTitle()' style='cursor:pointer' title='Click to set your title'>" + role + "</span> · " + esc(date);
+}
+function editTitle() {
+  const el = document.getElementById("user-info");
+  if (!el) return;
+  const inp = document.createElement("input");
+  inp.value = effectiveTitle();
+  inp.placeholder = "Your title (e.g. Chief Strategy Officer)";
+  inp.style.cssText = "font-family:inherit;font-size:13px;padding:4px 8px;border:0.5px solid var(--border-2);border-radius:6px;background:var(--bg-2);color:var(--text);width:260px";
+  let saved = false;
+  const save = () => { if (saved) return; saved = true; ccState.title = inp.value.trim(); ccSave(ccState); updateHeader(); };
+  inp.addEventListener("keydown", e => { if (e.key === "Enter") save(); if (e.key === "Escape") { saved = true; updateHeader(); } });
+  inp.addEventListener("blur", save);
+  el.innerHTML = "";
+  el.appendChild(document.createTextNode((userName || "") + " · "));
+  el.appendChild(inp);
+  inp.focus(); inp.select();
 }
 
 async function boot() {
