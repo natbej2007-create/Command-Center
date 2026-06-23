@@ -584,6 +584,15 @@ function logout() {
 // ================================================================
 // BOOT
 // ================================================================
+let userName = "", userTitle = "";
+function updateHeader() {
+  const el = document.getElementById("user-info");
+  if (!el) return;
+  const role = userTitle ? userTitle + ", United Services" : "United Services";
+  const date = new Date().toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" });
+  el.textContent = (userName || "") + " · " + role + " · " + date;
+}
+
 async function boot() {
   let name;
   if (inTeams) {
@@ -607,8 +616,8 @@ async function boot() {
   document.getElementById("app").style.display = "block";
   document.getElementById("tabs").style.display = "flex";
 
-  document.getElementById("user-info").textContent =
-    name + " · CSO, United Services · " + new Date().toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" });
+  userName = name;
+  updateHeader();
 
   await refreshAll();
   resumePendingEvent();
@@ -626,6 +635,12 @@ async function refreshAll() {
       document.getElementById("app").style.display = "none";
       return;
     }
+    try {
+      const me = await graphGet("/me?$select=displayName,jobTitle");
+      if (me && me.displayName) userName = me.displayName;
+      userTitle = (me && me.jobTitle) || "";
+      updateHeader();
+    } catch (e) {}
     await Promise.all([loadEmails(), loadCalendar()]);
     collectContacts();
   } finally {
