@@ -24,19 +24,18 @@
         auth: {
           clientId: cfg.clientId,
           authority: "https://login.microsoftonline.com/" + cfg.tenantId,
-          redirectUri: cfg.baseUrl + "/auth-end.html"
+          redirectUri: cfg.baseUrl + "/auth-end.html",
+          navigateToLoginRequestUrl: false
         },
         cache: { cacheLocation: "localStorage", storeAuthStateInCookie: true }
       });
 
       function notify(ok, payload) {
+        // Always notifySuccess so the main tab can read the result (token or error).
+        var msg = ok ? payload : JSON.stringify({ err: payload });
         microsoftTeams.app.initialize()
-          .then(function () {
-            if (ok) microsoftTeams.authentication.notifySuccess(payload);
-            else microsoftTeams.authentication.notifyFailure(payload);
-          })
+          .then(function () { microsoftTeams.authentication.notifySuccess(msg); })
           .catch(function () {
-            // If the Teams SDK is unavailable, at least show something.
             document.body.innerHTML = "<p>" + (ok ? "Signed in. You can close this window." : ("Sign in failed: " + payload)) + "</p>";
           });
       }

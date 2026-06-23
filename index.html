@@ -513,14 +513,16 @@ async function initApp() {
 // Inside Teams the tab runs in an isolated iframe, so it cannot read the
 // account the auth popup stored. The popup therefore hands the Graph token
 // straight back to us, and we hold it here.
-let teamsToken = null, teamsTokenExp = 0, teamsUserName = null;
+let teamsToken = null, teamsTokenExp = 0, teamsUserName = null, teamsAuthError = "";
 function applyTeamsAuth(res) {
   try {
     const data = JSON.parse(res);
+    if (data.err) { teamsToken = null; teamsAuthError = data.err; return; }
     teamsToken = data.t || null;
     teamsUserName = data.n || null;
     teamsTokenExp = Date.now() + 50 * 60 * 1000;
-  } catch (e) { teamsToken = null; }
+    teamsAuthError = "";
+  } catch (e) { teamsToken = null; teamsAuthError = "Could not read the sign in result."; }
 }
 async function teamsSignIn() {
   const res = await microsoftTeams.authentication.authenticate({
@@ -537,6 +539,7 @@ async function login() {
     if (inTeams) {
       await teamsSignIn();
       await boot();
+      if (!teamsToken) showLoginError(teamsAuthError || "Sign in did not return a token. Please try once more.");
     } else {
       await msalApp.loginRedirect({ scopes: CONFIG.scopes });
     }
