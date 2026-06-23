@@ -1094,20 +1094,106 @@ function dayAvailabilityCard(dayDate, events) {
 
   const label = dayDate.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
   const body = windows.length
-    ? windows.map(w =>
-        `<div class="slot-card">
+    ? windows.map(w => {
+        const sISO = w.s.toISOString(), eISO = w.e.toISOString();
+        return `<div class="slot-card">
            <div class="slot-info">
-             <div class="slot-time">${formatTime(w.s.toISOString())} to ${formatTime(w.e.toISOString())}</div>
+             <div class="slot-time">${formatTime(sISO)} to ${formatTime(eISO)}</div>
              <div class="slot-reason" style="font-size:11px;color:var(--text-3)">${TZONES.map(z => z.label + " " + tzTime(w.s, z.tz)).join("  ·  ")}</div>
            </div>
-         </div>`
-      ).join("")
+           <div class="slot-actions">
+             <button onclick="openAddEventPanel('${sISO}','${eISO}')"><i class="ti ti-calendar-plus"></i> Add</button>
+           </div>
+         </div>`;
+      }).join("")
     : `<div class="slot-reason" style="padding:8px 2px;color:var(--text-2)">No open windows in business hours.</div>`;
 
   return `<div class="card">
     <div class="event-title">${label}${isToday ? ' <span class="badge" style="background:var(--blue-bg);color:var(--blue-fg);margin-left:6px">Today</span>' : ''}</div>
     <div style="margin-top:10px">${body}</div>
   </div>`;
+}
+
+// ================================================================
+// CREATE EVENT (in-app booking; calendar write via incremental consent)
+// ================================================================
+async function getWriteToken() {
+  const account = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
+  if (!account) return null;
+  try {
+    const r = await msalApp.acquireTokenSilent({ scopes: ["Calendars.ReadWrite"], account });
+    return r.accessToken;
+  } catch (e1) {
+    try {
+      const r = await msalApp.acquireTokenPopup({ scopes: ["Calendars.ReadWrite"] });
+      return r.accessToken;
+    } catch (e2) {
+      return null;
+    }
+  }
+}
+
+async function graphPost(path, body) {
+  const token = await getWriteToken();
+  if (!token) throw new Error("Calendar write access was not granted.");
+  const res = await fetch("https://graph.microsoft.com/v1.0" + path, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) { const t = await res.text(); throw new Error("Graph " + res.status + ": " + t.slice(0, 120)); }
+  return res.json();
+}
+
+function openAddEventPanel(sISO, eISO) {
+  activePanel = { type: "addEvent" };
+  const s = new Date(sISO), e = new Date(eISO);
+  const panel = document.getElementById("action-panel");
+  panel.style.display = "block";
+  const zoneLine = TZONES.map(z => z.label + " " + tzTime(s, z.tz) + " to " + tzTime(e, z.tz)).join("  ·  ");
+  const dateLine = s.toLocaleDateString("en-US", { weekday:"long", month:"short", day:"numeric" }) + ",  " + formatTime(sISO) + " to " + formatTime(eISO);
+  const inputStyle = "width:100%;padding:10px 12px;border:0.5px solid var(--border-2);border-radius:var(--radius);background:var(--bg-2);color:var(--text);font-family:inherit;font-size:14px";
+  panel.innerHTML =
+    '<div class="panel-header">' +
+      '<div class="panel-title"><i class="ti ti-calendar-plus" style="font-size:16px;color:var(--text-2)"></i>New event</div>' +
+      '<button onclick="closePanel()" aria-label="Close"><i class="ti ti-x" style="font-size:16px"></i></button>' +
+    '</div>' +
+    '<div class="panel-context">' + esc(dateLine) + '<div style="font-size:11px;color:var(--text-3);margin-top:4px">' + zoneLine + '</div></div>' +
+    '<input id="ev-title" placeholder="Event title" style="' + inputStyle + ';margin-bottom:8px" />' +
+    '<input id="ev-attendees" placeholder="Attendee emails, comma separated (optional)" style="' + inputStyle + '" />' +
+    '<div class="panel-actions">' +
+      '<button class="primary" onclick="createEvent(\'' + sISO + '\',\'' + eISO + '\')"><i class="ti ti-check"></i> Create event</button>' +
+      '<button onclick="closePanel()">Cancel</button>' +
+    '</div>' +
+    '<div id="ev-status" style="font-size:13px;color:var(--text-2);margin-top:8px"></div>';
+  panel.scrollIntoView({ behavior:"smooth", block:"nearest" });
+  setTimeout(() => { const t = document.getElementById("ev-title"); if (t) t.focus(); }, 60);
+}
+
+async function createEvent(sISO, eISO) {
+  const titleEl = document.getElementById("ev-title");
+  const attEl   = document.getElementById("ev-attendees");
+  const status  = document.getElementById("ev-status");
+  const title   = ((titleEl && titleEl.value) || "").trim();
+  if (!title) { if (status) status.textContent = "Please add a title first."; return; }
+  if (status) status.textContent = "Creating the event...";
+  try {
+    const body = {
+      subject: title,
+      start: { dateTime: sISO.slice(0, 19), timeZone: "UTC" },
+      end:   { dateTime: eISO.slice(0, 19), timeZone: "UTC" },
+    };
+    const att = ((attEl && attEl.value) || "").trim();
+    if (att) {
+      body.attendees = att.split(",").map(x => x.trim()).filter(Boolean)
+        .map(a => ({ emailAddress: { address: a }, type: "required" }));
+    }
+    await graphPost("/me/events", body);
+    if (status) status.textContent = "Event created. Refreshing your calendar...";
+    setTimeout(() => { closePanel(); loadCalendar(); renderAvailability(); }, 900);
+  } catch (e) {
+    if (status) status.textContent = "Could not create it. Your account may still need calendar write access approved by your admin.";
+  }
 }
 
 function markDone(emailId) {
