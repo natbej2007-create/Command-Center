@@ -567,6 +567,7 @@ async function boot() {
     name + " · CSO, United Services · " + new Date().toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" });
 
   await refreshAll();
+  resumePendingEvent();
 }
 
 async function refreshAll() {
@@ -1117,32 +1118,53 @@ function dayAvailabilityCard(dayDate, events) {
 // ================================================================
 // CREATE EVENT (in-app booking; calendar write via incremental consent)
 // ================================================================
-async function getWriteToken() {
+async function getWriteTokenSilent() {
   const account = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
   if (!account) return null;
   try {
     const r = await msalApp.acquireTokenSilent({ scopes: ["Calendars.ReadWrite"], account });
     return r.accessToken;
-  } catch (e1) {
-    try {
-      const r = await msalApp.acquireTokenPopup({ scopes: ["Calendars.ReadWrite"] });
-      return r.accessToken;
-    } catch (e2) {
-      return null;
-    }
+  } catch (e) {
+    return null;
   }
 }
 
-async function graphPost(path, body) {
-  const token = await getWriteToken();
-  if (!token) throw new Error("Calendar write access was not granted.");
+async function graphPost(path, body, token) {
   const res = await fetch("https://graph.microsoft.com/v1.0" + path, {
     method: "POST",
     headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) { const t = await res.text(); throw new Error("Graph " + res.status + ": " + t.slice(0, 120)); }
+  if (!res.ok) { const t = await res.text(); throw new Error("Graph " + res.status + ": " + t.slice(0, 140)); }
   return res.json();
+}
+
+function buildEventBody(title, sISO, eISO, attStr) {
+  const body = {
+    subject: title,
+    start: { dateTime: sISO.slice(0, 19), timeZone: "UTC" },
+    end:   { dateTime: eISO.slice(0, 19), timeZone: "UTC" },
+  };
+  if (attStr) {
+    body.attendees = attStr.split(",").map(x => x.trim()).filter(Boolean)
+      .map(a => ({ emailAddress: { address: a }, type: "required" }));
+  }
+  return body;
+}
+
+// After the one-time calendar-access redirect, finish the event the user started.
+async function resumePendingEvent() {
+  let p = null;
+  try { p = JSON.parse(sessionStorage.getItem("cc_pending_event")); } catch (e) {}
+  if (!p) return;
+  try { sessionStorage.removeItem("cc_pending_event"); } catch (e) {}
+  const token = await getWriteTokenSilent();
+  if (!token) return; // consent still not granted (admin may be required)
+  try {
+    await graphPost("/me/events", buildEventBody(p.title, p.sISO, p.eISO, p.attStr), token);
+    loadCalendar();
+    alert('Added to your calendar: "' + p.title + '"');
+  } catch (e) {}
 }
 
 function openAddEventPanel(sISO, eISO) {
@@ -1175,24 +1197,29 @@ async function createEvent(sISO, eISO) {
   const attEl   = document.getElementById("ev-attendees");
   const status  = document.getElementById("ev-status");
   const title   = ((titleEl && titleEl.value) || "").trim();
-  if (!title) { if (status) status.textContent = "Please add a title first."; return; }
-  if (status) status.textContent = "Creating the event...";
-  try {
-    const body = {
-      subject: title,
-      start: { dateTime: sISO.slice(0, 19), timeZone: "UTC" },
-      end:   { dateTime: eISO.slice(0, 19), timeZone: "UTC" },
-    };
-    const att = ((attEl && attEl.value) || "").trim();
-    if (att) {
-      body.attendees = att.split(",").map(x => x.trim()).filter(Boolean)
-        .map(a => ({ emailAddress: { address: a }, type: "required" }));
+  const attStr  = ((attEl && attEl.value) || "").trim();
+  if (!title) { if (status) { status.style.color = "var(--red-fg)"; status.textContent = "Please type an event title first."; } return; }
+  if (status) { status.style.color = "var(--text-2)"; status.textContent = "Creating the event..."; }
+
+  const token = await getWriteTokenSilent();
+  if (token) {
+    try {
+      await graphPost("/me/events", buildEventBody(title, sISO, eISO, attStr), token);
+      if (status) status.textContent = "Event created. Refreshing your calendar...";
+      setTimeout(() => { closePanel(); loadCalendar(); renderAvailability(); }, 900);
+    } catch (e) {
+      if (status) { status.style.color = "var(--red-fg)"; status.textContent = "Could not create it: " + ((e && e.message) || "").slice(0, 90); }
     }
-    await graphPost("/me/events", body);
-    if (status) status.textContent = "Event created. Refreshing your calendar...";
-    setTimeout(() => { closePanel(); loadCalendar(); renderAvailability(); }, 900);
+    return;
+  }
+
+  // First time only: need one-time calendar-write consent. Stash the event and redirect.
+  try { sessionStorage.setItem("cc_pending_event", JSON.stringify({ sISO, eISO, title, attStr })); } catch (e) {}
+  if (status) status.textContent = "One time step: approving calendar access with Microsoft. The page will reload and then add your event automatically.";
+  try {
+    await msalApp.acquireTokenRedirect({ scopes: ["Calendars.ReadWrite"] });
   } catch (e) {
-    if (status) status.textContent = "Could not create it. Your account may still need calendar write access approved by your admin.";
+    if (status) { status.style.color = "var(--red-fg)"; status.textContent = "Calendar access could not start. Your admin may need to approve calendar write for this app."; }
   }
 }
 
