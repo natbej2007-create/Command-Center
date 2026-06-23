@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Signing in...</title>
-  <script src="https://res.cdn.office.net/teams-js/2.24.0/js/MicrosoftTeams.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3/lib/msal-browser.min.js"></script>
   <style>
     body { font-family: 'Segoe UI', sans-serif; display:flex; align-items:center;
@@ -15,9 +14,10 @@
   <p>Connecting to Microsoft...</p>
   <script src="config.js"></script>
   <script>
-    // This page opens inside the Teams auth popup. It kicks off the
-    // Microsoft login redirect. The result is handled by auth-end.html.
-    microsoftTeams.app.initialize().then(function () {
+    // This page runs inside the Teams auth popup. It does NOT wait on the
+    // Teams SDK (that handshake can hang in the desktop popup). It simply
+    // kicks the standard Microsoft login redirect. auth-end.html finishes it.
+    (function () {
       var cfg = window.CC_CONFIG;
       var msalApp = new msal.PublicClientApplication({
         auth: {
@@ -26,26 +26,17 @@
           redirectUri: cfg.baseUrl + "/auth-end.html",
           navigateToLoginRequestUrl: false
         },
-        cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
+        cache: { cacheLocation: "localStorage", storeAuthStateInCookie: true }
       });
-
-      msalApp.initialize().then(function () {
-        // Pass any login hint Teams gave us to smooth the flow.
-        var hint = "";
-        try {
-          var parsed = new URLSearchParams(window.location.search);
-          hint = parsed.get("login_hint") || "";
-        } catch (e) {}
-
-        msalApp.loginRedirect({
-          scopes: cfg.scopes,
-          loginHint: hint,
-          prompt: "select_account"
-        });
-      });
-    }).catch(function (e) {
-      document.body.innerHTML = "<p>Could not start sign in: " + e + "</p>";
-    });
+      msalApp.initialize()
+        .then(function () { return msalApp.handleRedirectPromise(); })
+        .then(function () {
+          var hint = "";
+          try { hint = new URLSearchParams(window.location.search).get("login_hint") || ""; } catch (e) {}
+          msalApp.loginRedirect({ scopes: cfg.scopes, loginHint: hint, prompt: "select_account" });
+        })
+        .catch(function (e) { document.body.innerHTML = "<p>Could not start sign in: " + e + "</p>"; });
+    })();
   </script>
 </body>
 </html>

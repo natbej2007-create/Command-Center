@@ -510,30 +510,49 @@ async function initApp() {
 // ================================================================
 // AUTH
 // ================================================================
+// Inside Teams the tab runs in an isolated iframe, so it cannot read the
+// account the auth popup stored. The popup therefore hands the Graph token
+// straight back to us, and we hold it here.
+let teamsToken = null, teamsTokenExp = 0, teamsUserName = null;
+function applyTeamsAuth(res) {
+  try {
+    const data = JSON.parse(res);
+    teamsToken = data.t || null;
+    teamsUserName = data.n || null;
+    teamsTokenExp = Date.now() + 50 * 60 * 1000;
+  } catch (e) { teamsToken = null; }
+}
+async function teamsSignIn() {
+  const res = await microsoftTeams.authentication.authenticate({
+    url: CONFIG.baseUrl + "/auth-start.html",
+    width: 600, height: 600,
+  });
+  applyTeamsAuth(res);
+  return teamsToken;
+}
+
 async function login() {
   hideLoginError();
   try {
     if (inTeams) {
-      // Teams handles the popup; auth-start.html does the MSAL redirect.
-      await microsoftTeams.authentication.authenticate({
-        url: CONFIG.baseUrl + "/auth-start.html",
-        width: 600,
-        height: 535,
-      });
+      await teamsSignIn();
       await boot();
     } else {
-      // Plain browser: standard redirect login.
       await msalApp.loginRedirect({ scopes: CONFIG.scopes });
     }
   } catch (e) {
     console.error("Login error:", e);
     showLoginError("Sign in did not complete. " +
-      (inTeams ? "Try opening the app in Teams web once to grant access." : "Please try again.") +
+      (inTeams ? "Please try once more, and approve any Microsoft prompt." : "Please try again.") +
       " (" + (e && e.message ? e.message : e) + ")");
   }
 }
 
 async function getToken() {
+  if (inTeams) {
+    if (teamsToken && Date.now() < teamsTokenExp) return teamsToken;
+    try { return await teamsSignIn(); } catch (e) { return null; }
+  }
   const account = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
   if (!account) return null;
   msalApp.setActiveAccount(account);
@@ -541,19 +560,9 @@ async function getToken() {
     const result = await msalApp.acquireTokenSilent({ scopes: CONFIG.scopes, account });
     return result.accessToken;
   } catch (e) {
-    // Silent failed: interactively re-auth.
     try {
-      if (inTeams) {
-        await microsoftTeams.authentication.authenticate({
-          url: CONFIG.baseUrl + "/auth-start.html", width: 600, height: 535,
-        });
-        const acct = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
-        const r = await msalApp.acquireTokenSilent({ scopes: CONFIG.scopes, account: acct });
-        return r.accessToken;
-      } else {
-        const r = await msalApp.acquireTokenPopup({ scopes: CONFIG.scopes });
-        return r.accessToken;
-      }
+      const r = await msalApp.acquireTokenPopup({ scopes: CONFIG.scopes });
+      return r.accessToken;
     } catch (e2) {
       console.error("Token error:", e2);
       return null;
@@ -562,6 +571,7 @@ async function getToken() {
 }
 
 function logout() {
+  if (inTeams) { teamsToken = null; teamsTokenExp = 0; location.reload(); return; }
   const account = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
   msalApp.logoutRedirect({ account }).catch(() => {
     location.reload();
@@ -572,18 +582,28 @@ function logout() {
 // BOOT
 // ================================================================
 async function boot() {
-  const account = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
-  if (!account) {
-    document.getElementById("login-screen").style.display = "flex";
-    document.getElementById("app").style.display = "none";
-    return;
+  let name;
+  if (inTeams) {
+    if (!teamsToken) {
+      document.getElementById("login-screen").style.display = "flex";
+      document.getElementById("app").style.display = "none";
+      return;
+    }
+    name = teamsUserName || "United Services";
+  } else {
+    const account = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
+    if (!account) {
+      document.getElementById("login-screen").style.display = "flex";
+      document.getElementById("app").style.display = "none";
+      return;
+    }
+    msalApp.setActiveAccount(account);
+    name = account.name || account.username;
   }
-  msalApp.setActiveAccount(account);
   document.getElementById("login-screen").style.display = "none";
   document.getElementById("app").style.display = "block";
   document.getElementById("tabs").style.display = "flex";
 
-  const name = account.name || account.username;
   document.getElementById("user-info").textContent =
     name + " · CSO, United Services · " + new Date().toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric" });
 

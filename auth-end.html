@@ -15,9 +15,10 @@
   <p>Almost there...</p>
   <script src="config.js"></script>
   <script>
-    // This page receives the Microsoft redirect, finishes the login,
-    // stores the account, then tells Teams the popup succeeded.
-    microsoftTeams.app.initialize().then(function () {
+    // This page receives the Microsoft redirect, finishes login, gets a Graph
+    // token, and hands it BACK to the main tab (which has isolated storage and
+    // cannot read this window's session).
+    (function () {
       var cfg = window.CC_CONFIG;
       var msalApp = new msal.PublicClientApplication({
         auth: {
@@ -25,26 +26,33 @@
           authority: "https://login.microsoftonline.com/" + cfg.tenantId,
           redirectUri: cfg.baseUrl + "/auth-end.html"
         },
-        cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false }
+        cache: { cacheLocation: "localStorage", storeAuthStateInCookie: true }
       });
 
-      msalApp.initialize().then(function () {
-        return msalApp.handleRedirectPromise();
-      }).then(function (result) {
-        if (result && result.account) {
-          msalApp.setActiveAccount(result.account);
-          // The account is now cached in localStorage (shared origin),
-          // so the main tab can acquire tokens silently.
-          microsoftTeams.authentication.notifySuccess("ok");
-        } else {
-          microsoftTeams.authentication.notifyFailure("no-account");
-        }
-      }).catch(function (e) {
-        microsoftTeams.authentication.notifyFailure(String(e));
-      });
-    }).catch(function (e) {
-      document.body.innerHTML = "<p>Sign in could not complete: " + e + "</p>";
-    });
+      function notify(ok, payload) {
+        microsoftTeams.app.initialize()
+          .then(function () {
+            if (ok) microsoftTeams.authentication.notifySuccess(payload);
+            else microsoftTeams.authentication.notifyFailure(payload);
+          })
+          .catch(function () {
+            // If the Teams SDK is unavailable, at least show something.
+            document.body.innerHTML = "<p>" + (ok ? "Signed in. You can close this window." : ("Sign in failed: " + payload)) + "</p>";
+          });
+      }
+
+      msalApp.initialize()
+        .then(function () { return msalApp.handleRedirectPromise(); })
+        .then(function (result) {
+          var account = (result && result.account) || msalApp.getAllAccounts()[0];
+          if (!account) { notify(false, "no-account"); return; }
+          msalApp.setActiveAccount(account);
+          return msalApp.acquireTokenSilent({ scopes: cfg.scopes, account }).then(function (r) {
+            notify(true, JSON.stringify({ t: r.accessToken, n: account.name || account.username }));
+          });
+        })
+        .catch(function (e) { notify(false, String(e)); });
+    })();
   </script>
 </body>
 </html>
