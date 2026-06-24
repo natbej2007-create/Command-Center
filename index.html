@@ -491,6 +491,17 @@ let activeTab    = "email";
 let allEmails    = [];
 let allEvents    = [];
 
+// ---- Done -> Outlook folder filing ----
+let emailCatById = {};   // email id -> triage category (the lane)
+let mailFolderIds = {};  // folder cache key -> Graph folder id
+// Each lane maps to a folder, all nested under one "Command Center" parent.
+const DONE_FOLDER = {
+  action_required: "Action required",
+  meeting_request: "Meeting requests",
+  forward:         "To forward",
+  fyi:             "FYI",
+};
+
 // ---- Lightweight local memory (per browser): cleared items + last visit ----
 const CC_STORE = "cc_state_v1";
 function ccLoad() { try { return JSON.parse(localStorage.getItem(CC_STORE)) || {}; } catch (e) { return {}; } }
@@ -705,6 +716,7 @@ async function boot() {
 
   await refreshAll();
   resumePendingEvent();
+  resumePendingMove();
 }
 
 async function refreshAll() {
@@ -855,6 +867,7 @@ function renderEmailList(emails, triage) {
     const pri = t.priority  || "low";
     const note = analyzing ? "Analyzing..." : (t.aiNote || "");
     const draft = analyzing ? "" : (t.draftReply || "");
+    emailCatById[email.id] = cat; // remember the lane so Done can file it
     return { cat: cat, html: emailCard(email, cat, pri, note, draft, isNewEmail(email)) };
   });
 
@@ -1604,6 +1617,89 @@ function markDone(emailId) {
     }, 200);
   }
   if (activePanel && activePanel.item && activePanel.item.id === emailId) closePanel();
+  // File it into its category folder in Outlook (best effort).
+  moveDoneEmail(emailId);
+}
+
+// ---- Move a handled email into its category folder in Outlook ----
+async function getMailWriteTokenSilent() {
+  const account = msalApp.getActiveAccount() || msalApp.getAllAccounts()[0];
+  if (!account) return null;
+  try {
+    const r = await msalApp.acquireTokenSilent({ scopes: ["Mail.ReadWrite"], account });
+    return r.accessToken;
+  } catch (e) { return null; }
+}
+
+// Find or create a mail folder by name (optionally under a parent), cached.
+async function ensureFolder(name, token, parentId) {
+  const key = (parentId || "root") + "/" + name;
+  if (mailFolderIds[key]) return mailFolderIds[key];
+  const base = parentId
+    ? "/me/mailFolders/" + parentId + "/childFolders"
+    : "/me/mailFolders";
+  const filter = "?$filter=" + encodeURIComponent("displayName eq '" + name.replace(/'/g, "''") + "'") + "&$top=1";
+  let res = await fetch("https://graph.microsoft.com/v1.0" + base + filter, { headers: { Authorization: "Bearer " + token } });
+  if (res.ok) {
+    const d = await res.json();
+    if (d.value && d.value[0]) { mailFolderIds[key] = d.value[0].id; return d.value[0].id; }
+  }
+  res = await fetch("https://graph.microsoft.com/v1.0" + base, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+    body: JSON.stringify({ displayName: name }),
+  });
+  if (!res.ok) throw new Error("folder " + res.status);
+  const d = await res.json();
+  mailFolderIds[key] = d.id;
+  return d.id;
+}
+
+// "Command Center" parent, then the lane folder inside it.
+async function categoryFolderId(folderName, token) {
+  const parent = await ensureFolder("Command Center", token, null);
+  return await ensureFolder(folderName, token, parent);
+}
+
+async function moveMessage(id, folderId, token) {
+  const res = await fetch("https://graph.microsoft.com/v1.0/me/messages/" + encodeURIComponent(id) + "/move", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+    body: JSON.stringify({ destinationId: folderId }),
+  });
+  if (!res.ok) { const t = await res.text(); throw new Error("move " + res.status + ": " + t.slice(0, 120)); }
+  return res.json();
+}
+
+async function moveDoneEmail(emailId) {
+  const cat = emailCatById[emailId] || "fyi";
+  const folderName = DONE_FOLDER[cat] || DONE_FOLDER.fyi;
+  const token = await getMailWriteTokenSilent();
+  if (!token) {
+    // First time only: ask once for permission to move mail, then finish on reload.
+    try { sessionStorage.setItem("cc_pending_move", JSON.stringify({ id: emailId, folder: folderName })); } catch (e) {}
+    try { await msalApp.acquireTokenRedirect({ scopes: ["Mail.ReadWrite"] }); } catch (e) {}
+    return;
+  }
+  try {
+    const fid = await categoryFolderId(folderName, token);
+    await moveMessage(emailId, fid, token);
+  } catch (e) { /* card already cleared and remembered done; leave inbox copy if move fails */ }
+}
+
+// After the one-time mail-access redirect, finish the move the user started.
+async function resumePendingMove() {
+  let pm = null;
+  try { pm = JSON.parse(sessionStorage.getItem("cc_pending_move")); } catch (e) {}
+  if (!pm) return;
+  try { sessionStorage.removeItem("cc_pending_move"); } catch (e) {}
+  const token = await getMailWriteTokenSilent();
+  if (!token) return;
+  try {
+    const fid = await categoryFolderId(pm.folder, token);
+    await moveMessage(pm.id, fid, token);
+    loadEmails();
+  } catch (e) {}
 }
 
 function updateStats(categories) {
