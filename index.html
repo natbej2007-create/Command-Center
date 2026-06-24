@@ -1029,7 +1029,11 @@ function openPanel(type, itemId, isEvent) {
       <i class="ti ti-arrow-up-right" style="font-size:14px;color:var(--text-3)"></i>
     </button>`).join("")}`;
   } else if (type === "schedule" || type === "reschedule") {
-    body = `<p class="panel-body">I will check your calendar for the best open windows this week.</p>
+    const lead = type === "reschedule"
+      ? "Pick an open time below and I will move this meeting to it. Its length stays the same."
+      : "Pick an open time below and I will set up the meeting.";
+    body = `<p class="panel-body">${lead}</p>
+    <div id="reschedule-status" style="font-size:13px;color:var(--text-2);margin-bottom:8px;display:none"></div>
     <div id="slots-area"><div class="loading" style="padding:1rem 0"><i class="ti ti-loader spinning" style="font-size:20px"></i><p>Checking your calendar...</p></div></div>`;
     setTimeout(() => findAvailableSlots(), 50);
   } else if (type === "cancel") {
@@ -1191,7 +1195,7 @@ function slotCard(slot) {
     </div>
     <div class="slot-actions">
       <span class="badge" style="background:${color};color:${fg}">${slot.score}</span>
-      <button onclick="alert('Slot noted. Open Outlook or Teams to send a calendar invite for this time.')">Pick this</button>
+      <button class="primary" onclick="pickSlot('${slot.start.toISOString()}','${slot.end.toISOString()}')">Pick this</button>
     </div>
   </div>`;
 }
@@ -1334,6 +1338,67 @@ async function graphPost(path, body, token) {
   return res.json();
 }
 
+async function graphPatch(path, body, token) {
+  const res = await fetch("https://graph.microsoft.com/v1.0" + path, {
+    method: "PATCH",
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) { const t = await res.text(); throw new Error("Graph " + res.status + ": " + t.slice(0, 140)); }
+  return res.json();
+}
+
+// Pick this: in reschedule mode move the existing meeting; from an email
+// meeting request, open the booking panel prefilled to create a new one.
+async function pickSlot(sISO, eISO) {
+  if (activePanel && activePanel.type === "reschedule" && activePanel.item) {
+    return rescheduleEventTo(activePanel.item, sISO);
+  }
+  openAddEventPanel(sISO, eISO);
+}
+
+function rescheduleStatus(msg, isError) {
+  const el = document.getElementById("reschedule-status");
+  if (!el) return;
+  el.style.display = "block";
+  el.style.color = isError ? "var(--red-fg)" : "var(--text-2)";
+  el.textContent = msg;
+}
+
+async function rescheduleEventTo(event, sISO) {
+  // Keep the meeting's original length; just move the start.
+  const oStart = toInstant(event.start && event.start.dateTime);
+  const oEnd   = toInstant(event.end && event.end.dateTime);
+  const durMs  = (oStart && oEnd) ? (oEnd - oStart) : 60 * 60000;
+  const newStart = new Date(sISO);
+  const newEnd   = new Date(newStart.getTime() + durMs);
+  const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone) || "UTC";
+  const body = {
+    start: { dateTime: localWallClock(newStart), timeZone: tz },
+    end:   { dateTime: localWallClock(newEnd),   timeZone: tz },
+  };
+  rescheduleStatus("Moving the meeting...");
+  const token = await getWriteTokenSilent();
+  if (token) {
+    try {
+      await graphPatch("/me/events/" + event.id, body, token);
+      rescheduleStatus("Done. Refreshing your calendar...");
+      setTimeout(() => { closePanel(); loadCalendar(); renderAvailability(); }, 800);
+    } catch (e) {
+      rescheduleStatus("Could not move it: " + ((e && e.message) || "").slice(0, 90), true);
+    }
+    return;
+  }
+  // First time only: need one-time calendar-write consent. Stash and redirect.
+  try { sessionStorage.setItem("cc_pending_reschedule", JSON.stringify({ id: event.id, sISO: newStart.toISOString(), eISO: newEnd.toISOString() })); } catch (e) {}
+  rescheduleStatus("One time step: approving calendar access with Microsoft. The page will reload and finish the move.");
+  try {
+    await msalApp.acquireTokenRedirect({ scopes: ["Calendars.ReadWrite"] });
+  } catch (e) {
+    rescheduleStatus("Calendar access could not start. Your admin may need to approve calendar write for this app.", true);
+  }
+}
+
 // Produce a "YYYY-MM-DDTHH:mm:ss" string in the browser's local wall clock.
 function localWallClock(d) {
   const p = n => String(n).padStart(2, "0");
@@ -1358,19 +1423,37 @@ function buildEventBody(title, sISO, eISO, attStr) {
   return body;
 }
 
-// After the one-time calendar-access redirect, finish the event the user started.
+// After the one-time calendar-access redirect, finish what the user started:
+// a new event they were creating, or a reschedule they were applying.
 async function resumePendingEvent() {
-  let p = null;
-  try { p = JSON.parse(sessionStorage.getItem("cc_pending_event")); } catch (e) {}
-  if (!p) return;
-  try { sessionStorage.removeItem("cc_pending_event"); } catch (e) {}
+  let pe = null, pr = null;
+  try { pe = JSON.parse(sessionStorage.getItem("cc_pending_event")); } catch (e) {}
+  try { pr = JSON.parse(sessionStorage.getItem("cc_pending_reschedule")); } catch (e) {}
+  if (!pe && !pr) return;
   const token = await getWriteTokenSilent();
   if (!token) return; // consent still not granted (admin may be required)
-  try {
-    await graphPost("/me/events", buildEventBody(p.title, p.sISO, p.eISO, p.attStr), token);
-    loadCalendar();
-    alert('Added to your calendar: "' + p.title + '"');
-  } catch (e) {}
+
+  if (pe) {
+    try { sessionStorage.removeItem("cc_pending_event"); } catch (e) {}
+    try {
+      await graphPost("/me/events", buildEventBody(pe.title, pe.sISO, pe.eISO, pe.attStr), token);
+      alert('Added to your calendar: "' + pe.title + '"');
+    } catch (e) {}
+  }
+
+  if (pr) {
+    try { sessionStorage.removeItem("cc_pending_reschedule"); } catch (e) {}
+    const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone) || "UTC";
+    try {
+      await graphPatch("/me/events/" + pr.id, {
+        start: { dateTime: localWallClock(new Date(pr.sISO)), timeZone: tz },
+        end:   { dateTime: localWallClock(new Date(pr.eISO)), timeZone: tz },
+      }, token);
+      alert("Your meeting was moved.");
+    } catch (e) {}
+  }
+
+  loadCalendar();
 }
 
 function addAttendee(email) {
